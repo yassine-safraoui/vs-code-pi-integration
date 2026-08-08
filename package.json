@@ -1,0 +1,16 @@
+{
+  "name": "vs-code-pi-integration",
+  "private": true,
+  "version": "0.0.0",
+  "workspaces": [
+    "vs-code-extension",
+    "pi-plugin"
+  ],
+  "scripts": {
+    "build": "npm run build --workspaces",
+    "check": "npm run check --workspaces"
+  },
+  "engines": {
+    "node": ">=22"
+  }
+}

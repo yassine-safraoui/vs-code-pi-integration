@@ -1,0 +1,34 @@
+{
+  "name": "pi-context-vscode",
+  "displayName": "Pi Context",
+  "description": "Attach VS Code selections to the next Pi prompt.",
+  "version": "0.0.0",
+  "private": true,
+  "type": "commonjs",
+  "engines": {
+    "vscode": "^1.99.0"
+  },
+  "categories": ["Other"],
+  "activationEvents": ["onCommand:piContext.attachSelection"],
+  "main": "./out/extension.js",
+  "contributes": {
+    "commands": [
+      {
+        "command": "piContext.attachSelection",
+        "title": "Pi Context: Attach Editor Selection"
+      }
+    ]
+  },
+  "scripts": {
+    "build": "tsc -p .",
+    "check": "tsc --noEmit -p ."
+  },
+  "dependencies": {
+    "effect": "^3.0.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "@types/vscode": "^1.99.0",
+    "typescript": "^5.8.0"
+  }
+}

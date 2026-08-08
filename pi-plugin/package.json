@@ -1,0 +1,20 @@
+{
+  "name": "pi-context-plugin",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Pi extension scaffold for VS Code context attachments.",
+  "exports": "./src/index.ts",
+  "scripts": {
+    "build": "tsc -p .",
+    "check": "tsc --noEmit -p ."
+  },
+  "dependencies": {
+    "@earendil-works/pi-coding-agent": "latest",
+    "effect": "^3.0.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "typescript": "^5.8.0"
+  }
+}
