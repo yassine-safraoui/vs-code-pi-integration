@@ -1,9 +1,25 @@
 # Pi Context plugin
 
-Scaffold for a project-local Pi extension. Pi supports TypeScript extension modules and can load this file directly during development:
+This Pi extension owns the authoritative pending-attachment set and advertises itself through the per-user `~/.pi-context/run/v1` registry. It binds only to `127.0.0.1`, requires the ephemeral token published in its user-private discovery record, and releases its record and working-directory lease during every Pi shutdown or session replacement.
+
+The authenticated `GET /v1/state` endpoint returns the current pending attachment state for VS Code refreshes. Mutation responses return the same authoritative state after the mutation is applied.
+
+The `input` hook stages pending IDs without transforming the user's text. `before_agent_start` injects the exact snapshots as a hidden persistent custom message after Pi expands skills and templates, then consumes them.
+
+Pending attachments are shown in a passive widget above Pi's prompt editor. Every row includes the inside/outside relationship, display path, and complete start/end coordinates. The footer is left untouched.
+
+Run `/pi-context` to open the attachment manager:
+
+- Use Up and Down to highlight an attachment.
+- Press Enter to open its captured range in VS Code.
+- Press `D` to delete it.
+- Press Escape to close the manager.
+
+`/pi-context clear` remains available to clear everything directly.
+
+During development:
 
 ```sh
-pi --extension ./src/index.ts
+pnpm build
+pi --extension /absolute/path/to/pi-plugin/src/index.ts
 ```
-
-The current `/pi-context` command only confirms that the scaffold is loaded. It deliberately does not start a listener or manipulate prompt input until the supported Pi input-interception API has been validated.

@@ -3,18 +3,24 @@
   "version": "0.0.0",
   "private": true,
   "type": "module",
-  "description": "Pi extension scaffold for VS Code context attachments.",
+  "description": "Pi extension that receives explicit VS Code context attachments.",
   "exports": "./src/index.ts",
+  "pi": {
+    "extensions": ["./src/index.ts"]
+  },
   "scripts": {
     "build": "tsc -p .",
-    "check": "tsc --noEmit -p ."
+    "check": "tsc --noEmit -p . && tsc --noEmit -p tsconfig.test.json",
+    "test": "tsc -p tsconfig.test.json && node --test .generated-tests/test/*.test.js"
   },
   "dependencies": {
-    "@earendil-works/pi-coding-agent": "latest",
-    "effect": "^3.0.0"
+    "@earendil-works/pi-coding-agent": "0.84.1",
+    "@earendil-works/pi-tui": "0.84.1",
+    "@pi-context/protocol": "workspace:*",
+    "effect": "3.22.1"
   },
   "devDependencies": {
-    "@types/node": "^22.0.0",
-    "typescript": "^5.8.0"
+    "@types/node": "22.20.1",
+    "typescript": "5.9.3"
   }
 }
