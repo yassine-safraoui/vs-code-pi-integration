@@ -1,6 +1,9 @@
 node_modules/
+.pnpm-store/
 dist/
 out/
+.test-dist/
+.generated-tests/
 *.vsix
 .DS_Store
-
+.vscode-test/

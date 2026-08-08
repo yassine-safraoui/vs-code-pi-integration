@@ -1,0 +1,11 @@
+packages:
+  - packages/*
+  - pi-plugin
+  - vs-code-extension
+
+confirmModulesPurge: false
+
+allowBuilds:
+  '@google/genai': false
+  esbuild: true
+  protobufjs: false

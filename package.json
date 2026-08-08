@@ -2,15 +2,14 @@
   "name": "vs-code-pi-integration",
   "private": true,
   "version": "0.0.0",
-  "workspaces": [
-    "vs-code-extension",
-    "pi-plugin"
-  ],
+  "packageManager": "pnpm@11.20.0",
   "scripts": {
-    "build": "npm run build --workspaces",
-    "check": "npm run check --workspaces"
+    "build": "pnpm -r build",
+    "check": "pnpm -r check",
+    "test": "pnpm --filter @pi-context/protocol build && pnpm -r test",
+    "ci": "pnpm check && pnpm test && pnpm build"
   },
   "engines": {
-    "node": ">=22"
+    "node": ">=22.19.0"
   }
 }

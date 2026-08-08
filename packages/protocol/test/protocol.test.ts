@@ -1,0 +1,73 @@
+import assert from "node:assert/strict";
+import { describe, it } from "node:test";
+import { Effect, Schema } from "effect";
+import { join } from "node:path";
+import {
+  AttachmentSnapshotSchema,
+  MAX_ATTACHMENT_BYTES,
+  PROTOCOL_VERSION,
+  classifyPath,
+  createVsCodeOpenAttachmentUri,
+  decodeVsCodeOpenAttachmentUri,
+  isPathInside,
+  registryPaths,
+  validateAttachmentBatch
+} from "../src/index.js";
+
+const attachment = (text = "const answer = 42;") => Schema.decodeUnknownSync(AttachmentSnapshotSchema)({
+  id: "5ee16f5e-40f9-4d78-a2c2-9f79045cb1c4",
+  fileUri: "file:///work/src/value.ts",
+  displayPath: "src/value.ts",
+  relationship: "inside",
+  range: { start: { line: 1, column: 1 }, end: { line: 1, column: 19 } },
+  text,
+  languageId: "typescript",
+  documentVersion: 3,
+  dirty: true,
+  capturedAt: "2026-08-08T12:00:00.000Z"
+});
+
+describe("protocol", () => {
+  it("decodes a valid attachment and validates limits", async () => {
+    const value = attachment();
+    assert.equal((await Effect.runPromise(validateAttachmentBatch([value])))[0]?.text, value.text);
+    assert.equal(PROTOCOL_VERSION, 1);
+  });
+
+  it("rejects oversized UTF-8 selections", async () => {
+    const result = await Effect.runPromise(Effect.either(validateAttachmentBatch([attachment("é".repeat(MAX_ATTACHMENT_BYTES))])));
+    assert.equal(result._tag, "Left");
+  });
+
+  it("handles Windows containment, drive boundaries, and separators", () => {
+    assert.equal(isPathInside("C:\\Repo\\src\\A.ts", "c:\\repo", "win32"), true);
+    assert.equal(isPathInside("D:\\Repo\\A.ts", "C:\\Repo", "win32"), false);
+    assert.deepEqual(classifyPath("C:\\Repo\\src\\A.ts", "C:\\Repo", "win32"), {
+      relationship: "inside",
+      displayPath: "src/A.ts"
+    });
+  });
+
+  it("handles POSIX containment without prefix confusion", () => {
+    assert.equal(isPathInside("/repo/src/a.ts", "/repo", "darwin"), true);
+    assert.equal(isPathInside("/repository/a.ts", "/repo", "darwin"), false);
+  });
+
+  it("uses the dedicated per-user registry", () => {
+    assert.equal(registryPaths(join("Users", "test")).root, join("Users", "test", ".pi-context", "run", "v1"));
+  });
+
+  it("round-trips a VS Code attachment URI with its complete selection", async () => {
+    const original = attachment();
+    const request = await Effect.runPromise(decodeVsCodeOpenAttachmentUri(createVsCodeOpenAttachmentUri(original)));
+    assert.equal(request.fileUri, original.fileUri);
+    assert.deepEqual(request.range, original.range);
+  });
+
+  it("rejects attachment URIs for another VS Code extension", async () => {
+    const result = await Effect.runPromise(Effect.either(
+      decodeVsCodeOpenAttachmentUri("vscode://other.extension/open-attachment?fileUri=file%3A%2F%2F%2Ftmp%2Fa.ts")
+    ));
+    assert.equal(result._tag, "Left");
+  });
+});
