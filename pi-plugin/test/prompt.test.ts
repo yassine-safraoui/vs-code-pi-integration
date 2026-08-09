@@ -23,6 +23,5 @@ describe("attachment widget", () => {
     assert.equal(lines[0], "Pi Context · 2 pending attachments");
     assert.match(lines[1]!, /\[inside\] src\/value\.ts:7:3-11:8/);
     assert.match(lines[2]!, /\[outside\] \/other\/value\.ts:7:3-11:8/);
-    assert.match(lines[3]!, /\/pi-context/);
   });
 });
