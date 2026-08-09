@@ -1,0 +1,18 @@
+{
+  "version": "0.2.0",
+  "configurations": [
+    {
+      "name": "Run Pi Context Extension",
+      "type": "extensionHost",
+      "request": "launch",
+      "runtimeExecutable": "${execPath}",
+      "args": [
+        "${workspaceFolder}/pi-plugin",
+        "--extensionDevelopmentPath=${workspaceFolder}/vs-code-extension",
+        "--disable-extensions"
+      ],
+      "outFiles": ["${workspaceFolder}/vs-code-extension/out/**/*.cjs"],
+      "preLaunchTask": "build Pi Context"
+    }
+  ]
+}

@@ -1,34 +1,108 @@
 {
   "name": "pi-context-vscode",
+  "publisher": "pi-context",
   "displayName": "Pi Context",
   "description": "Attach VS Code selections to the next Pi prompt.",
   "version": "0.0.0",
   "private": true,
-  "type": "commonjs",
+  "type": "module",
   "engines": {
     "vscode": "^1.99.0"
   },
   "categories": ["Other"],
-  "activationEvents": ["onCommand:piContext.attachSelection"],
-  "main": "./out/extension.js",
+  "extensionKind": ["ui"],
+  "capabilities": {
+    "untrustedWorkspaces": { "supported": false },
+    "virtualWorkspaces": false
+  },
+  "activationEvents": [
+    "onCommand:piContext.attachSelections",
+    "onCommand:piContext.chooseTarget",
+    "onCommand:piContext.clearAttachments",
+    "onCommand:piContext.refreshAttachments",
+    "onView:piContext.attachments",
+    "onUri"
+  ],
+  "main": "./out/extension.cjs",
   "contributes": {
     "commands": [
       {
-        "command": "piContext.attachSelection",
-        "title": "Pi Context: Attach Editor Selection"
+        "command": "piContext.attachSelections",
+        "title": "Pi Context: Attach Editor Selection(s)"
+      },
+      {
+        "command": "piContext.chooseTarget",
+        "title": "Pi Context: Choose Target Pi"
+      },
+      {
+        "command": "piContext.clearAttachments",
+        "title": "Pi Context: Clear Pending Attachments"
+      },
+      {
+        "command": "piContext.refreshAttachments",
+        "title": "Pi Context: Refresh Pending Attachments",
+        "icon": "$(refresh)"
+      },
+      {
+        "command": "piContext.openAttachment",
+        "title": "Pi Context: Open Attachment"
       }
-    ]
+    ],
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "piContext",
+          "title": "Pi Context",
+          "icon": "media/pi-context.svg"
+        }
+      ]
+    },
+    "views": {
+      "piContext": [
+        {
+          "id": "piContext.attachments",
+          "name": "Pending Attachments"
+        }
+      ]
+    },
+    "viewsWelcome": [
+      {
+        "view": "piContext.attachments",
+        "contents": "No pending attachments were found.\n[Refresh](command:piContext.refreshAttachments)"
+      }
+    ],
+    "menus": {
+      "editor/context": [
+        {
+          "command": "piContext.attachSelections",
+          "when": "editorHasSelection && resourceScheme == file",
+          "group": "navigation@100"
+        }
+      ],
+      "view/title": [
+        {
+          "command": "piContext.refreshAttachments",
+          "when": "view == piContext.attachments",
+          "group": "navigation"
+        }
+      ]
+    }
   },
   "scripts": {
-    "build": "tsc -p .",
-    "check": "tsc --noEmit -p ."
+    "build": "esbuild src/extension.ts --bundle --platform=node --format=cjs --target=node22 --external:vscode --outfile=out/extension.cjs",
+    "check": "tsc --noEmit -p . && tsc --noEmit -p tsconfig.test.json",
+    "test": "tsc -p tsconfig.test.json && node --test .generated-tests/test/*.test.js",
+    "test:integration": "pnpm build && tsc -p tsconfig.integration.json && node .generated-tests/run-integration.js"
   },
   "dependencies": {
-    "effect": "^3.0.0"
+    "@pi-context/protocol": "workspace:*",
+    "effect": "3.22.1"
   },
   "devDependencies": {
-    "@types/node": "^22.0.0",
-    "@types/vscode": "^1.99.0",
-    "typescript": "^5.8.0"
+    "@types/node": "22.20.1",
+    "@types/vscode": "1.125.0",
+    "@vscode/test-electron": "3.1.0",
+    "esbuild": "0.28.1",
+    "typescript": "5.9.3"
   }
 }

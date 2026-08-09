@@ -1,0 +1,9 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "noEmit": false,
+    "rootDir": ".",
+    "outDir": ".generated-tests"
+  },
+  "include": ["integration", "run-integration.ts"]
+}
