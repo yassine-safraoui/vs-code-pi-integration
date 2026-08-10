@@ -28,6 +28,7 @@ describe("registry server", () => {
 
     const sourcePath = join(cwd, "source.ts");
     await writeFile(sourcePath, "const value = 1;", "utf8");
+    const sourceAttachmentId = randomUUID();
     const mutation = await fetch(`http://127.0.0.1:${running.record.port}/v1/mutations`, {
       method: "POST",
       headers: {
@@ -39,7 +40,7 @@ describe("registry server", () => {
         requestId: randomUUID(),
         type: "attachSelections",
         attachments: [{
-          id: randomUUID(),
+          id: sourceAttachmentId,
           fileUri: pathToFileURL(sourcePath).toString(),
           displayPath: "client-value-is-reclassified",
           relationship: "outside",
@@ -66,6 +67,36 @@ describe("registry server", () => {
       (await stateResponse.json() as { attachments: Array<{ displayPath: string }> }).attachments.map(({ displayPath }) => displayPath),
       ["source.ts"]
     );
+
+    await Effect.runPromise(store.consumeForPrompt([sourceAttachmentId]));
+    const historyResponse = await fetch(`http://127.0.0.1:${running.record.port}/v1/state`, {
+      headers: { authorization: `Bearer ${running.record.token}` }
+    });
+    const historyState = await historyResponse.json() as {
+      attachments: unknown[];
+      history: Array<{ historyId: string; attachment: { id: string; text: string } }>;
+    };
+    assert.equal(historyState.attachments.length, 0);
+    assert.equal(historyState.history[0]?.attachment.id, sourceAttachmentId);
+
+    const replay = await fetch(`http://127.0.0.1:${running.record.port}/v1/mutations`, {
+      method: "POST",
+      headers: {
+        authorization: `Bearer ${running.record.token}`,
+        "content-type": "application/json"
+      },
+      body: JSON.stringify({
+        protocolVersion: PROTOCOL_VERSION,
+        requestId: randomUUID(),
+        type: "reattachHistory",
+        historyId: historyState.history[0]?.historyId
+      })
+    });
+    assert.equal(replay.status, 200);
+    const replayState = await replay.json() as { attachments: Array<{ id: string; text: string }>; history: unknown[] };
+    assert.equal(replayState.attachments[0]?.text, "const value = 1;");
+    assert.notEqual(replayState.attachments[0]?.id, sourceAttachmentId);
+    assert.equal(replayState.history.length, 1);
 
     const unauthorizedState = await fetch(`http://127.0.0.1:${running.record.port}/v1/state`);
     assert.equal(unauthorizedState.status, 401);
@@ -106,7 +137,7 @@ describe("registry server", () => {
     const canonical = await Effect.runPromise(canonicalizePath(cwd));
     const leasePath = join(paths.leases, `${createHash("sha256").update(canonical).digest("hex")}.json`);
     await writeFile(leasePath, JSON.stringify({
-      protocolVersion: 1,
+      protocolVersion: PROTOCOL_VERSION,
       instanceId: randomUUID(),
       canonicalWorkingDirectory: canonical,
       token: "stale"

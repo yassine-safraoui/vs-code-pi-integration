@@ -15,7 +15,7 @@ const pi = (id: string, cwd: string): LivePi => {
     port: 12345,
     token: "secret"
   };
-  return { record, health: { protocolVersion: 1, instanceId: id, canonicalWorkingDirectory: cwd, pendingCount: 0 } };
+  return { record, health: { protocolVersion: PROTOCOL_VERSION, instanceId: id, canonicalWorkingDirectory: cwd, pendingCount: 0 } };
 };
 
 describe("routeToPi", () => {

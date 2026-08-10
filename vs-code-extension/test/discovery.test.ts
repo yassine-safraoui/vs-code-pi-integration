@@ -64,7 +64,7 @@ describe("Pi client", () => {
   it("fetches authenticated state and verifies the instance identity", async () => {
     const instanceId = randomUUID();
     const token = randomBytes(32).toString("base64url");
-    const state: AttachmentState = { protocolVersion: PROTOCOL_VERSION, instanceId, revision: 3, attachments: [] };
+    const state: AttachmentState = { protocolVersion: PROTOCOL_VERSION, instanceId, revision: 3, attachments: [], history: [] };
     const server = createServer((request, response) => {
       assert.equal(request.url, "/v1/state");
       assert.equal(request.headers.authorization, `Bearer ${token}`);

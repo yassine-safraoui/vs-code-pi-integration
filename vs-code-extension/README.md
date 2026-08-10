@@ -11,7 +11,9 @@ Commands:
 - **Pi Context: Clear Pending Attachments**
 - **Pi Context: Refresh Pending Attachments**
 
-The Pi Context Activity Bar contains a **Pending Attachments** tree grouped by live Pi working directory. It refreshes when opened and from its refresh button. Attachment and clear mutations update it only from the state returned by Pi; clicking an attachment opens its file and selects the captured range.
+The Pi Context Activity Bar contains an **Attachments** tree grouped by live Pi working directory, with separate **Pending** and **Previously Used** sections. It refreshes when opened and from its refresh button. Mutations update it only from the state returned by Pi; activating an attachment opens its file and selects the captured range.
+
+Previously used entries are the exact merged snapshots consumed by sent prompts. Use the inline add action or the item context menu to reattach one to its owning Pi. The saved history item stays visible; after its replay is sent, it moves to the top. History remains inside the Pi session and is not persisted by VS Code.
 
 The remembered Pi is held only in memory for the current VS Code window. **Automatic routing** in the target picker clears it.
 

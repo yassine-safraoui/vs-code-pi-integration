@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { Effect, Exit, Scope } from "effect";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
-import type { AttachmentSnapshot } from "@pi-context/protocol";
+import { PROTOCOL_VERSION, type AttachmentSnapshot } from "@pi-context/protocol";
 import type { AttachmentStore } from "./attachment-store.js";
 import { makeAttachmentStore } from "./attachment-store.js";
 import { AttachmentManagerComponent } from "./attachment-manager.js";
@@ -37,7 +37,7 @@ export default function piContextPlugin(pi: ExtensionAPI): void {
       const snapshot = await Effect.runPromise(commandStore.snapshot);
       if (args.trim() === "clear") {
         await Effect.runPromise(commandStore.apply({
-          protocolVersion: 1,
+          protocolVersion: PROTOCOL_VERSION,
           requestId: randomUUID(),
           type: "clearAttachments"
         }));
@@ -53,7 +53,7 @@ export default function piContextPlugin(pi: ExtensionAPI): void {
         theme,
         {
           remove: (attachmentId) => Effect.runPromise(commandStore.apply({
-            protocolVersion: 1,
+            protocolVersion: PROTOCOL_VERSION,
             requestId: randomUUID(),
             type: "removeAttachment",
             attachmentId
@@ -103,9 +103,8 @@ export default function piContextPlugin(pi: ExtensionAPI): void {
     if (!store || !stagedAttachmentIds?.length) return;
     const ids = stagedAttachmentIds;
     stagedAttachmentIds = undefined;
-    const attachments = await Effect.runPromise(store.select(ids));
+    const attachments = await Effect.runPromise(store.consumeForPrompt(ids));
     if (attachments.length === 0) return;
-    await Effect.runPromise(store.consume(ids));
     return {
       message: {
         customType: "pi-context.attachments",
