@@ -44,7 +44,7 @@ describe("AttachmentStore", () => {
     const mutation = { protocolVersion: PROTOCOL_VERSION, requestId: randomUUID(), type: "attachSelections", attachments: [attachment] } as const;
     assert.equal((await Effect.runPromise(store.apply(mutation))).revision, 1);
     assert.equal((await Effect.runPromise(store.apply({ ...mutation, requestId: randomUUID() }))).revision, 1);
-    assert.deepEqual(await Effect.runPromise(store.consumeForPrompt([attachment.id])), [attachment]);
+    assert.deepEqual((await Effect.runPromise(store.consumeForPrompt([attachment.id]))).attachments, [attachment]);
     assert.equal((await Effect.runPromise(store.snapshot)).revision, 2);
   });
 
@@ -175,11 +175,24 @@ describe("AttachmentStore", () => {
     const pending = (await Effect.runPromise(store.snapshot)).attachments[0]!;
     assert.equal(pending.text, "abcdefghi");
 
-    assert.deepEqual(await Effect.runPromise(store.consumeForPrompt([pending.id])), [pending]);
+    assert.deepEqual((await Effect.runPromise(store.consumeForPrompt([pending.id]))).attachments, [pending]);
     const state = await Effect.runPromise(store.snapshot);
     assert.deepEqual(state.attachments, []);
     assert.equal(state.history.length, 1);
     assert.deepEqual(state.history[0]?.attachment, pending);
+  });
+
+  it("starts with reconstructed Pi session history", async () => {
+    const previous = item();
+    const history = [{
+      historyId: randomUUID(),
+      attachment: previous,
+      usedAt: "2026-08-10T12:00:00.000Z"
+    }];
+    const store = await Effect.runPromise(makeAttachmentStore(randomUUID(), undefined, {
+      initialHistory: history
+    }));
+    assert.deepEqual((await Effect.runPromise(store.snapshot)).history, history);
   });
 
   it("does not record pending attachments that were removed or cleared", async () => {
@@ -192,7 +205,10 @@ describe("AttachmentStore", () => {
       type: "removeAttachment",
       attachmentId: removed.id
     }));
-    assert.deepEqual(await Effect.runPromise(store.consumeForPrompt([removed.id])), []);
+    assert.deepEqual(await Effect.runPromise(store.consumeForPrompt([removed.id])), {
+      attachments: [],
+      historyEntries: []
+    });
 
     const cleared = item();
     await Effect.runPromise(store.apply(attach([cleared])));

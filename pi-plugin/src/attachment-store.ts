@@ -30,16 +30,40 @@ interface PendingAttachment {
 export interface AttachmentStore {
   readonly snapshot: Effect.Effect<AttachmentState>;
   readonly apply: (mutation: Mutation) => Effect.Effect<AttachmentState, ProtocolFailure>;
-  readonly consumeForPrompt: (ids: ReadonlyArray<string>) => Effect.Effect<ReadonlyArray<AttachmentSnapshot>>;
+  readonly consumeForPrompt: (ids: ReadonlyArray<string>) => Effect.Effect<ConsumedAttachments>;
+  readonly replaceHistory: (history: ReadonlyArray<AttachmentHistoryEntry>) => Effect.Effect<AttachmentState>;
 }
 
 export interface AttachmentStoreOptions {
   readonly now?: () => string;
   readonly makeId?: () => string;
+  readonly initialHistory?: ReadonlyArray<AttachmentHistoryEntry>;
+}
+
+export interface ConsumedAttachments {
+  readonly attachments: ReadonlyArray<AttachmentSnapshot>;
+  readonly historyEntries: ReadonlyArray<AttachmentHistoryEntry>;
 }
 
 const sameAttachment = (left: AttachmentSnapshot, right: AttachmentSnapshot): boolean =>
   JSON.stringify(left) === JSON.stringify(right);
+
+const retainHistory = (
+  history: ReadonlyArray<AttachmentHistoryEntry>
+): ReadonlyArray<AttachmentHistoryEntry> => {
+  let retainedBytes = 0;
+  const seen = new Set<string>();
+  const retained: AttachmentHistoryEntry[] = [];
+  for (const entry of history) {
+    if (seen.has(entry.historyId)) continue;
+    const size = utf8ByteLength(entry.attachment.text);
+    if (retained.length >= MAX_HISTORY_ENTRIES || retainedBytes + size > MAX_HISTORY_BYTES) break;
+    retained.push(entry);
+    seen.add(entry.historyId);
+    retainedBytes += size;
+  }
+  return retained;
+};
 
 type Position = AttachmentSnapshot["range"]["start"];
 
@@ -175,7 +199,11 @@ export const makeAttachmentStore = (
   Effect.gen(function* () {
     const now = options.now ?? (() => new Date().toISOString());
     const makeId = options.makeId ?? randomUUID;
-    const state = yield* Ref.make<StoreData>({ revision: 0, attachments: new Map(), history: [] });
+    const state = yield* Ref.make<StoreData>({
+      revision: 0,
+      attachments: new Map(),
+      history: retainHistory(options.initialHistory ?? [])
+    });
     const semaphore = yield* Effect.makeSemaphore(1);
     const toSnapshot = (data: StoreData): AttachmentState => ({
       protocolVersion: PROTOCOL_VERSION,
@@ -315,7 +343,7 @@ export const makeAttachmentStore = (
 
     const consumeForPrompt = (
       ids: ReadonlyArray<string>
-    ): Effect.Effect<ReadonlyArray<AttachmentSnapshot>> =>
+    ): Effect.Effect<ConsumedAttachments> =>
       semaphore.withPermits(1)(Effect.gen(function* () {
         const current = yield* Ref.get(state);
         const attachments = new Map(current.attachments);
@@ -323,7 +351,7 @@ export const makeAttachmentStore = (
           const item = attachments.get(id);
           return item ? [item] : [];
         });
-        if (consumed.length === 0) return [];
+        if (consumed.length === 0) return { attachments: [], historyEntries: [] };
         for (const item of consumed) attachments.delete(item.attachment.id);
 
         const usedAt = now();
@@ -337,14 +365,7 @@ export const makeAttachmentStore = (
           ...newEntries,
           ...current.history.filter(({ historyId }) => !updatedHistoryIds.has(historyId))
         ];
-        let retainedBytes = 0;
-        const retainedHistory: AttachmentHistoryEntry[] = [];
-        for (const entry of history) {
-          const size = utf8ByteLength(entry.attachment.text);
-          if (retainedHistory.length >= MAX_HISTORY_ENTRIES || retainedBytes + size > MAX_HISTORY_BYTES) break;
-          retainedHistory.push(entry);
-          retainedBytes += size;
-        }
+        const retainedHistory = retainHistory(history);
 
         const next: StoreData = {
           revision: current.revision + 1,
@@ -353,8 +374,24 @@ export const makeAttachmentStore = (
         };
         yield* Ref.set(state, next);
         onChange(toSnapshot(next));
-        return consumed.map(({ attachment }) => attachment);
+        return {
+          attachments: consumed.map(({ attachment }) => attachment),
+          historyEntries: newEntries
+        };
       }));
 
-    return { snapshot, apply, consumeForPrompt };
+    const replaceHistory = (
+      history: ReadonlyArray<AttachmentHistoryEntry>
+    ): Effect.Effect<AttachmentState> => semaphore.withPermits(1)(Effect.gen(function* () {
+      const current = yield* Ref.get(state);
+      const next: StoreData = {
+        ...current,
+        revision: current.revision + 1,
+        history: retainHistory(history)
+      };
+      yield* Ref.set(state, next);
+      return toSnapshot(next);
+    }));
+
+    return { snapshot, apply, consumeForPrompt, replaceHistory };
   });

@@ -10,13 +10,13 @@ macOS and Windows are the primary targets. Development currently happens on macO
 - `pi-plugin` owns pending and previously used attachment state, the authenticated loopback server, working-directory lease, and prompt-time context injection.
 - `vs-code-extension` discovers live Pi records, routes selections, and presents Pi's authoritative attachment state in an Activity Bar view.
 
-Plugin-enabled Pis register under `~/.pi-context/run/v2`. Records contain an ephemeral loopback endpoint and token, never selected source. Pending and previously used source snapshots remain in Pi memory for the current session only.
+Plugin-enabled Pis register under `~/.pi-context/run/v3`. Records contain an ephemeral loopback endpoint, token, and five-minute heartbeat, never selected source. VS Code expires records whose heartbeat is at least six minutes old. Pending snapshots remain in Pi memory; previously used history is validated and reconstructed from Pi's own non-context session metadata.
 
 While attachments are pending, Pi shows their paths and ranges in a widget above the prompt. `/pi-context` opens a keyboard-driven manager: Enter opens the captured selection in VS Code and `D` removes it.
 
 The **Attachments** view in VS Code shows separate **Pending** and **Previously Used** sections for each live Pi. It fetches state using the authenticated `GET /v1/state` endpoint, and successful mutation responses replace that Pi's displayed state so the view never changes optimistically. Selecting an item opens its file and restores the captured range. Previously used items have an inline reattach action that restores the exact saved snapshot to pending state.
 
-Only merged snapshots consumed by an accepted prompt enter history; deleting or clearing pending items does not. Explicitly replaying and sending a history item updates that entry and moves it to the top, while independent captures remain separate across prompts. Pi retains the newest 50 entries up to 1 MiB of attachment text per session.
+Only merged snapshots consumed by an accepted prompt enter history; deleting or clearing pending items does not. Explicitly replaying and sending a history item updates that entry and moves it to the top, while independent captures remain separate across prompts. Pi retains the newest 50 entries up to 1 MiB of attachment text. History follows `/new` and is restored when a previous thread or tree branch is revisited.
 
 Pi coalesces overlapping selections from the same file and document version. Reattaching an already pending range is a no-op; a partial overlap expands the existing attachment, including transitively across a batch. Ranges that only touch remain separate. If overlapping snapshots came from different document versions or disagree in their shared text, Pi rejects the batch so it never creates a misleading mixed snapshot.
 

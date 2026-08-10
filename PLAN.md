@@ -6,10 +6,10 @@ Architecture 1 is implemented as a pnpm workspace with a shared Effect-schema pr
 
 ## Runtime flow
 
-1. A plugin-enabled Pi canonicalizes its working directory, claims its per-directory lease, binds `127.0.0.1` on an ephemeral port, and publishes a token-authenticated record under `~/.pi-context/run/v2/instances`.
-2. A VS Code command enumerates and health-checks those records. The selected files are compared against live Pi working directories independently of VS Code's workspace configuration.
+1. A plugin-enabled Pi canonicalizes its working directory, claims its per-directory lease, binds `127.0.0.1` on an ephemeral port, and publishes a token-authenticated record under `~/.pi-context/run/v3/instances`. It refreshes the record heartbeat every five minutes.
+2. A VS Code command rejects heartbeats that are at least six minutes old, then health-checks the remaining records. The selected files are compared against live Pi working directories independently of VS Code's workspace configuration.
 3. The extension routes to the remembered containing Pi, the only/deepest containing Pi, or a user-selected Pi when routing is ambiguous. Outside files remain attachable and are clearly marked.
-4. Pi keeps pending snapshots and previously used history in memory. Its `input` hook stages the current IDs; `before_agent_start` atomically records the merged snapshots in history, injects them as a hidden persistent custom context message without rewriting the user's prompt, and removes them from pending state.
+4. Pi keeps pending snapshots in memory and reconstructs previously used history from validated, non-context session metadata. Its `input` hook stages the current IDs; `before_agent_start` atomically records the merged snapshots in history, persists the compact history delta alongside the hidden context message, injects that message without rewriting the user's prompt, and removes the snapshots from pending state. `/new` seeds the new thread with the previous thread's history, while `/resume` and `/tree` reconstruct the selected thread or branch.
 5. Pi shutdown, reload, session replacement, and fork close the listener and remove only the current instance's registry record and lease.
 
 ## Supported scope
@@ -24,4 +24,4 @@ Remote extension hosts, WSL, containers, browser VS Code, and cross-machine forw
 
 ## Future persistence
 
-Pending attachments and previously used history are session-scoped today. A future feature may add a database keyed by canonical project path to restore pending attachments, history, and other Pi session state after restart. That work requires explicit retention, privacy, migration, and stale-path policies and is not part of the in-memory history feature.
+Pending attachments remain runtime-only. Previously used history is stored in Pi's own session files, follows `/new`, and is reconstructed when a thread or branch is revisited; VS Code does not persist a second copy. A future project-level database could restore pending attachments and other state independently of Pi threads, but that requires explicit retention, privacy, migration, and stale-path policies.

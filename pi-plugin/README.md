@@ -1,10 +1,10 @@
 # Pi Context plugin
 
-This Pi extension owns the authoritative pending and previously used attachment state and advertises itself through the per-user `~/.pi-context/run/v2` registry. It binds only to `127.0.0.1`, requires the ephemeral token published in its user-private discovery record, and releases its record and working-directory lease during every Pi shutdown or session replacement.
+This Pi extension owns the authoritative pending and previously used attachment state and advertises itself through the per-user `~/.pi-context/run/v3` registry. It atomically refreshes its discovery heartbeat every five minutes. It binds only to `127.0.0.1`, requires the ephemeral token published in its user-private discovery record, and releases its record and working-directory lease during every Pi shutdown or session replacement.
 
-The authenticated `GET /v1/state` endpoint returns pending attachments and session-scoped history for VS Code refreshes. Mutation responses return the same authoritative state after the mutation is applied.
+The authenticated `GET /v1/state` endpoint returns pending attachments and Pi-owned history for VS Code refreshes. Mutation responses return the same authoritative state after the mutation is applied. History deltas are validated and reconstructed from Pi custom session entries that do not enter model context; `/new` carries history forward, and `/resume` or `/tree` restores the selected thread or branch.
 
-The `input` hook stages pending IDs without transforming the user's text. `before_agent_start` atomically records the exact merged snapshots as previously used, injects them as a hidden persistent custom message after Pi expands skills and templates, then removes them from pending state. Deleted or cleared pending attachments never enter history.
+The `input` hook stages pending IDs without transforming the user's text. `before_agent_start` atomically records the exact merged snapshots as previously used, stores the compact history delta in the hidden message details, injects the attachment content after Pi expands skills and templates, then removes it from pending state. Deleted or cleared pending attachments never enter history.
 
 History is newest-first and limited to 50 entries and 1 MiB of attachment text. VS Code can replay an exact saved snapshot with a fresh pending ID and capture timestamp. Pi's own widget and `/pi-context` manager continue to show pending attachments only.
 
