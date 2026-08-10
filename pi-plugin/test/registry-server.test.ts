@@ -16,9 +16,21 @@ describe("registry server", () => {
     const cwd = await mkdtemp(join(tmpdir(), "pi-context-cwd-"));
     const instanceId = randomUUID();
     const store = await Effect.runPromise(makeAttachmentStore(instanceId));
-    const running = await Effect.runPromise(startRegistryServer(cwd, store, { userHome, instanceId }));
+    const running = await Effect.runPromise(startRegistryServer(cwd, store, {
+      userHome,
+      instanceId,
+      heartbeatIntervalMs: 10
+    }));
     const instancePath = join(registryPaths(userHome).instances, `${instanceId}.json`);
-    assert.equal(JSON.parse(await readFile(instancePath, "utf8")).instanceId, instanceId);
+    const initialRecord = JSON.parse(await readFile(instancePath, "utf8")) as { instanceId: string; lastActiveAt: string };
+    assert.equal(initialRecord.instanceId, instanceId);
+    const heartbeatDeadline = Date.now() + 1_000;
+    let refreshedRecord = initialRecord;
+    while (refreshedRecord.lastActiveAt === initialRecord.lastActiveAt && Date.now() < heartbeatDeadline) {
+      await new Promise((resolve) => setTimeout(resolve, 10));
+      refreshedRecord = JSON.parse(await readFile(instancePath, "utf8")) as typeof initialRecord;
+    }
+    assert.notEqual(refreshedRecord.lastActiveAt, initialRecord.lastActiveAt);
     const unauthorized = await fetch(`http://127.0.0.1:${running.record.port}/v1/health`);
     assert.equal(unauthorized.status, 401);
     const response = await fetch(`http://127.0.0.1:${running.record.port}/v1/health`, {
@@ -112,6 +124,7 @@ describe("registry server", () => {
     assert.equal(wrongVersion.status, 400);
     assert.equal((await wrongVersion.json() as { error: { code: string } }).error.code, "VERSION_MISMATCH");
     await Effect.runPromise(running.close);
+    await assert.rejects(readFile(instancePath, "utf8"), { code: "ENOENT" });
   });
 
   it("rejects a second live Pi for the same canonical directory", async () => {

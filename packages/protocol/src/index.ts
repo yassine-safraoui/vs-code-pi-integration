@@ -3,7 +3,9 @@ import { realpath } from "node:fs/promises";
 import { homedir } from "node:os";
 import * as nodePath from "node:path";
 
-export const PROTOCOL_VERSION = 2 as const;
+export const PROTOCOL_VERSION = 3 as const;
+export const DISCOVERY_HEARTBEAT_INTERVAL_MS = 5 * 60 * 1000;
+export const DISCOVERY_STALE_AFTER_MS = 6 * 60 * 1000;
 export const VSCODE_EXTENSION_ID = "pi-context.pi-context-vscode";
 export const VSCODE_OPEN_ATTACHMENT_PATH = "/open-attachment";
 export const MAX_ATTACHMENTS = 20;
@@ -121,11 +123,17 @@ export const DiscoveryRecordSchema = Schema.Struct({
   canonicalWorkingDirectory: NonEmptyString,
   pid: PositiveInteger,
   startedAt: IsoTimestamp,
+  lastActiveAt: IsoTimestamp,
   host: Schema.Literal("127.0.0.1"),
   port: Schema.Int.pipe(Schema.between(1, 65535)),
   token: NonEmptyString
 });
 export type DiscoveryRecord = typeof DiscoveryRecordSchema.Type;
+
+export const isDiscoveryRecordStale = (
+  record: Pick<DiscoveryRecord, "lastActiveAt">,
+  now = Date.now()
+): boolean => now - Date.parse(record.lastActiveAt) >= DISCOVERY_STALE_AFTER_MS;
 
 export const LeaseRecordSchema = Schema.Struct({
   protocolVersion: Schema.Literal(PROTOCOL_VERSION),

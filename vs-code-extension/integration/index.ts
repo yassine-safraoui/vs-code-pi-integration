@@ -26,6 +26,7 @@ export async function run(): Promise<void> {
     canonicalWorkingDirectory: "/workspace/project",
     pid: 123,
     startedAt: "2026-08-10T12:00:00.000Z",
+    lastActiveAt: new Date().toISOString(),
     host: "127.0.0.1",
     port: 43210,
     token: "test-token"
