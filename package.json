@@ -5,11 +5,15 @@
   "packageManager": "pnpm@11.20.0",
   "scripts": {
     "build": "pnpm -r build",
+    "bundle:vsix": "pnpm --filter pi-context-vscode build && pnpm --dir vs-code-extension exec vsce package --no-dependencies --out ../pi-context-vscode.vsix",
     "check": "pnpm -r check",
     "test": "pnpm --filter @pi-context/protocol build && pnpm -r test",
     "ci": "pnpm check && pnpm test && pnpm build"
   },
   "engines": {
     "node": ">=22.19.0"
+  },
+  "devDependencies": {
+    "@vscode/vsce": "^3.9.2"
   }
 }

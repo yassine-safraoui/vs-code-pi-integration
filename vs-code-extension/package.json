@@ -7,7 +7,7 @@
   "private": true,
   "type": "module",
   "engines": {
-    "vscode": "^1.99.0"
+    "vscode": "^1.125.0"
   },
   "categories": ["Other"],
   "extensionKind": ["ui"],
@@ -24,6 +24,11 @@
     "onUri"
   ],
   "main": "./out/extension.cjs",
+  "files": [
+    "out/**",
+    "media/**",
+    "README.md"
+  ],
   "contributes": {
     "commands": [
       {
