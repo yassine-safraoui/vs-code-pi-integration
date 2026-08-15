@@ -3,8 +3,9 @@ import { randomUUID } from "node:crypto";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import * as vscode from "vscode";
-import { createVsCodeOpenAttachmentUri } from "@pi-context/protocol";
+import { PROTOCOL_VERSION, createVsCodeOpenAttachmentUri, type AttachmentState, type DiscoveryRecord } from "@pi-context/protocol";
 import { handleExtensionUri } from "../src/extension.js";
+import { AttachmentTreeProvider } from "../src/attachments-tree.js";
 
 export async function run(): Promise<void> {
   const extension = vscode.extensions.all.find((candidate) => candidate.packageJSON.name === "pi-context-vscode");
@@ -16,6 +17,52 @@ export async function run(): Promise<void> {
   assert.ok(commands.includes("piContext.clearAttachments"));
   assert.ok(commands.includes("piContext.refreshAttachments"));
   assert.ok(commands.includes("piContext.openAttachment"));
+  assert.ok(commands.includes("piContext.reattachHistory"));
+
+  const instanceId = randomUUID();
+  const record: DiscoveryRecord = {
+    protocolVersion: PROTOCOL_VERSION,
+    instanceId,
+    canonicalWorkingDirectory: "/workspace/project",
+    pid: 123,
+    startedAt: "2026-08-10T12:00:00.000Z",
+    lastActiveAt: new Date().toISOString(),
+    host: "127.0.0.1",
+    port: 43210,
+    token: "test-token"
+  };
+  const historyAttachment = {
+    id: randomUUID(),
+    fileUri: "file:///workspace/project/src/history.ts",
+    displayPath: "src/history.ts",
+    relationship: "inside" as const,
+    range: { start: { line: 1, column: 1 }, end: { line: 1, column: 8 } },
+    text: "history",
+    languageId: "typescript",
+    documentVersion: 1,
+    dirty: false,
+    capturedAt: "2026-08-10T11:00:00.000Z"
+  };
+  const state: AttachmentState = {
+    protocolVersion: PROTOCOL_VERSION,
+    revision: 2,
+    instanceId,
+    attachments: [],
+    history: [{
+      historyId: randomUUID(),
+      attachment: historyAttachment,
+      usedAt: "2026-08-10T12:00:00.000Z"
+    }]
+  };
+  const provider = new AttachmentTreeProvider();
+  provider.replaceStates([{ record, state }]);
+  const root = provider.getChildren()[0]!;
+  const sections = provider.getChildren(root);
+  assert.deepEqual(sections.map((section) => section.type === "section" ? section.kind : undefined), ["pending", "history"]);
+  const historyNode = provider.getChildren(sections[1]!)[0]!;
+  assert.equal(historyNode.type, "historyAttachment");
+  assert.equal(provider.getTreeItem(historyNode).contextValue, "piContext.historyAttachment");
+  provider.dispose();
 
   const testFile = vscode.Uri.file(join(tmpdir(), `pi context open ${randomUUID()}.ts`));
   await vscode.workspace.fs.writeFile(testFile, new TextEncoder().encode("first\nselected text\nlast\n"));

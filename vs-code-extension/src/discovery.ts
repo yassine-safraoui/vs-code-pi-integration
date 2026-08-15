@@ -9,6 +9,7 @@ import {
   decodeDiscoveryRecord,
   decodeErrorResponse,
   decodeHealthResponse,
+  isDiscoveryRecordStale,
   registryPaths,
   type AttachmentState,
   type DiscoveryRecord,
@@ -104,6 +105,7 @@ export const makeDiscoveryService = (paths: RegistryPaths = registryPaths()): Di
         try {
           const record = await Effect.runPromise(decodeDiscoveryRecord(JSON.parse(await readFile(recordPath, "utf8"))));
           if (record.host !== "127.0.0.1") throw new Error("Non-loopback discovery record.");
+          if (isDiscoveryRecordStale(record)) throw new Error("Stale discovery heartbeat.");
           const result = await Effect.runPromise(Effect.either(healthCheck(record)));
           if (result._tag === "Left") {
             await quarantine(recordPath);
