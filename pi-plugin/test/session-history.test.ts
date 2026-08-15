@@ -127,4 +127,53 @@ describe("session attachment history", () => {
     const reopened = SessionManager.open(sessionFile);
     assert.deepEqual(reconstructAttachmentHistory(reopened.getBranch()), [expected]);
   });
+
+  it("seeds /new from the selected branch instead of the file's latest branch", async () => {
+    const cwd = await mkdtemp(join(tmpdir(), "pi-context-tree-cwd-"));
+    const sessionDir = await mkdtemp(join(tmpdir(), "pi-context-tree-sessions-"));
+    const selected = historyEntry("selected-branch");
+    const latest = historyEntry("latest-branch");
+    const session = SessionManager.create(cwd, sessionDir);
+    session.appendCustomMessageEntry(
+      attachmentContextType,
+      "selected context",
+      false,
+      { historyEntries: [selected] }
+    );
+    session.appendMessage({
+      role: "assistant",
+      content: [],
+      api: "test",
+      provider: "test",
+      model: "test",
+      usage: {
+        input: 0,
+        output: 0,
+        cacheRead: 0,
+        cacheWrite: 0,
+        totalTokens: 0,
+        cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 }
+      },
+      stopReason: "stop",
+      timestamp: Date.now()
+    });
+    const selectedLeaf = session.getLeafId();
+    assert.ok(selectedLeaf);
+    session.appendCustomMessageEntry(
+      attachmentContextType,
+      "latest context",
+      false,
+      { historyEntries: [latest] }
+    );
+    const sessionFile = session.getSessionFile();
+    assert.ok(sessionFile);
+
+    session.branch(selectedLeaf);
+    const selectedHistory = reconstructAttachmentHistory(session.getBranch());
+    session.appendCustomEntry(attachmentHistorySeedType, historySeed(selectedHistory));
+
+    const reopened = SessionManager.open(sessionFile);
+    assert.deepEqual(reconstructAttachmentHistory(reopened.getBranch()), [selected]);
+    assert.notDeepEqual(reconstructAttachmentHistory(reopened.getBranch()), [latest, selected]);
+  });
 });

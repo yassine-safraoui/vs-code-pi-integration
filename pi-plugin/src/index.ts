@@ -107,6 +107,15 @@ export default function piContextPlugin(pi: ExtensionAPI): void {
     updateWidget([]);
   });
 
+  pi.on("session_before_switch", async (event, ctx) => {
+    if (event.reason !== "new" || !store) return;
+    const snapshot = await Effect.runPromise(store.snapshot);
+    // Persist the active /tree leaf as the file's latest branch before Pi
+    // replaces the session runtime. Reopening previousSessionFile during the
+    // next session_start can then reconstruct the branch the user selected.
+    pi.appendEntry(attachmentHistorySeedType, historySeed(snapshot.history));
+  });
+
   pi.on("session_tree", async (_event, ctx) => {
     if (!store) return;
     await Effect.runPromise(store.replaceHistory(reconstructAttachmentHistory(ctx.sessionManager.getBranch())));
