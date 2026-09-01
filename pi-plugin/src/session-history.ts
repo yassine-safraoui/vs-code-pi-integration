@@ -9,6 +9,7 @@ import {
 } from "@pi-context/protocol";
 
 export const attachmentContextType = "pi-context.attachments";
+export const attachmentHistoryDeltaType = "pi-context.history-delta";
 export const attachmentHistorySeedType = "pi-context.history";
 
 const HistoryDeltaSchema = Schema.Struct({
@@ -55,8 +56,11 @@ export const reconstructAttachmentHistory = (
       if (seed) history = retain(seed.history);
       continue;
     }
-    if (entry.type !== "custom_message" || entry.customType !== attachmentContextType) continue;
-    const delta = decode(HistoryDeltaSchema, entry.details);
+    const delta = entry.type === "custom" && entry.customType === attachmentHistoryDeltaType
+      ? decode(HistoryDeltaSchema, entry.data)
+      : entry.type === "custom_message" && entry.customType === attachmentContextType
+        ? decode(HistoryDeltaSchema, entry.details)
+        : undefined;
     if (!delta) continue;
     const changed = new Set(delta.historyEntries.map(({ historyId }) => historyId));
     history = retain([
@@ -66,6 +70,10 @@ export const reconstructAttachmentHistory = (
   }
   return history;
 };
+
+export const historyDelta = (historyEntries: ReadonlyArray<AttachmentHistoryEntry>) => ({
+  historyEntries
+});
 
 export const historySeed = (history: ReadonlyArray<AttachmentHistoryEntry>) => ({
   version: 1 as const,

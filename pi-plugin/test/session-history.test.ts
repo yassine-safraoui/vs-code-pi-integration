@@ -8,7 +8,9 @@ import { SessionManager, type SessionEntry } from "@earendil-works/pi-coding-age
 import type { AttachmentHistoryEntry, AttachmentSnapshot } from "@pi-context/protocol";
 import {
   attachmentContextType,
+  attachmentHistoryDeltaType,
   attachmentHistorySeedType,
+  historyDelta,
   historySeed,
   reconstructAttachmentHistory
 } from "../src/session-history.js";
@@ -52,14 +54,26 @@ describe("session attachment history", () => {
       data: historySeed([older])
     }, {
       ...base(),
+      type: "custom",
+      customType: attachmentHistoryDeltaType,
+      data: historyDelta([newer])
+    }] as SessionEntry[];
+
+    assert.deepEqual(reconstructAttachmentHistory(entries), [newer, older]);
+  });
+
+  it("reconstructs legacy history stored with persistent attachment context", () => {
+    const expected = historyEntry("legacy");
+    const entry = {
+      ...base(),
       type: "custom_message",
       customType: attachmentContextType,
       content: "hidden context",
       display: false,
-      details: { historyEntries: [newer] }
-    }] as SessionEntry[];
+      details: { historyEntries: [expected] }
+    } as SessionEntry;
 
-    assert.deepEqual(reconstructAttachmentHistory(entries), [newer, older]);
+    assert.deepEqual(reconstructAttachmentHistory([entry]), [expected]);
   });
 
   it("moves a replayed history id to the front without duplicating it", () => {
@@ -73,11 +87,9 @@ describe("session attachment history", () => {
       data: historySeed([other, original])
     }, {
       ...base(),
-      type: "custom_message",
-      customType: attachmentContextType,
-      content: "hidden context",
-      display: false,
-      details: { historyEntries: [replay] }
+      type: "custom",
+      customType: attachmentHistoryDeltaType,
+      data: historyDelta([replay])
     }] as SessionEntry[];
 
     assert.deepEqual(reconstructAttachmentHistory(entries), [replay, other]);
@@ -98,12 +110,7 @@ describe("session attachment history", () => {
     const sessionDir = await mkdtemp(join(tmpdir(), "pi-context-history-sessions-"));
     const expected = historyEntry("persisted");
     const session = SessionManager.create(cwd, sessionDir);
-    session.appendCustomMessageEntry(
-      attachmentContextType,
-      "hidden context",
-      false,
-      { historyEntries: [expected] }
-    );
+    session.appendCustomEntry(attachmentHistoryDeltaType, historyDelta([expected]));
     session.appendMessage({
       role: "assistant",
       content: [],
@@ -134,12 +141,7 @@ describe("session attachment history", () => {
     const selected = historyEntry("selected-branch");
     const latest = historyEntry("latest-branch");
     const session = SessionManager.create(cwd, sessionDir);
-    session.appendCustomMessageEntry(
-      attachmentContextType,
-      "selected context",
-      false,
-      { historyEntries: [selected] }
-    );
+    session.appendCustomEntry(attachmentHistoryDeltaType, historyDelta([selected]));
     session.appendMessage({
       role: "assistant",
       content: [],
@@ -159,12 +161,7 @@ describe("session attachment history", () => {
     });
     const selectedLeaf = session.getLeafId();
     assert.ok(selectedLeaf);
-    session.appendCustomMessageEntry(
-      attachmentContextType,
-      "latest context",
-      false,
-      { historyEntries: [latest] }
-    );
+    session.appendCustomEntry(attachmentHistoryDeltaType, historyDelta([latest]));
     const sessionFile = session.getSessionFile();
     assert.ok(sessionFile);
 

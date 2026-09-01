@@ -5,12 +5,17 @@ import { PROTOCOL_VERSION, type AttachmentSnapshot } from "@pi-context/protocol"
 import type { AttachmentStore } from "./attachment-store.js";
 import { makeAttachmentStore } from "./attachment-store.js";
 import { AttachmentManagerComponent } from "./attachment-manager.js";
+import {
+  injectAttachmentContextBeforePrompt,
+  type PinnedAttachmentContext
+} from "./agent-context.js";
 import { attachmentWidgetLines, describeAttachments, renderAttachmentContext } from "./prompt.js";
 import { startRegistryServer, type RunningRegistryServer } from "./registry-server.js";
 import { openAttachmentInVsCode } from "./vscode-opener.js";
 import {
-  attachmentContextType,
+  attachmentHistoryDeltaType,
   attachmentHistorySeedType,
+  historyDelta,
   historySeed,
   reconstructAttachmentHistory
 } from "./session-history.js";
@@ -23,6 +28,7 @@ export default function piContextPlugin(pi: ExtensionAPI): void {
   let running: RunningRegistryServer | undefined;
   let sessionScope: Scope.CloseableScope | undefined;
   let stagedAttachmentIds: ReadonlyArray<string> | undefined;
+  let pinnedAttachmentContext: PinnedAttachmentContext | undefined;
 
   const updateWidget = (attachments: ReadonlyArray<AttachmentSnapshot>): void => {
     activeContext?.ui.setWidget(
@@ -77,6 +83,7 @@ export default function piContextPlugin(pi: ExtensionAPI): void {
     ctx.ui.setStatus(uiKey, undefined);
     ctx.ui.setWidget(uiKey, undefined);
     stagedAttachmentIds = undefined;
+    pinnedAttachmentContext = undefined;
     const instanceId = randomUUID();
     let history = reconstructAttachmentHistory(ctx.sessionManager.getBranch());
     if (event.reason === "new" && event.previousSessionFile) {
@@ -126,26 +133,35 @@ export default function piContextPlugin(pi: ExtensionAPI): void {
       return { action: "continue" };
     }
     const snapshot = await Effect.runPromise(store.snapshot);
+    pinnedAttachmentContext = undefined;
     stagedAttachmentIds = snapshot.attachments.length > 0
       ? snapshot.attachments.map((attachment) => attachment.id)
       : undefined;
     return { action: "continue" };
   });
 
-  pi.on("before_agent_start", async () => {
+  pi.on("before_agent_start", async (event) => {
     if (!store || !stagedAttachmentIds?.length) return;
     const ids = stagedAttachmentIds;
     stagedAttachmentIds = undefined;
     const consumed = await Effect.runPromise(store.consumeForPrompt(ids));
     if (consumed.attachments.length === 0) return;
-    return {
-      message: {
-        customType: attachmentContextType,
-        content: renderAttachmentContext(consumed.attachments),
-        display: false,
-        details: { attachmentIds: ids, historyEntries: consumed.historyEntries }
-      }
+    pi.appendEntry(attachmentHistoryDeltaType, historyDelta(consumed.historyEntries));
+    pinnedAttachmentContext = {
+      prompt: event.prompt,
+      content: renderAttachmentContext(consumed.attachments)
     };
+  });
+
+  pi.on("context", (event) => {
+    if (!pinnedAttachmentContext) return;
+    return {
+      messages: injectAttachmentContextBeforePrompt(event.messages, pinnedAttachmentContext)
+    };
+  });
+
+  pi.on("agent_settled", () => {
+    pinnedAttachmentContext = undefined;
   });
 
   pi.on("session_shutdown", async () => {
@@ -153,6 +169,7 @@ export default function piContextPlugin(pi: ExtensionAPI): void {
     activeContext?.ui.setWidget(uiKey, undefined);
     activeContext = undefined;
     stagedAttachmentIds = undefined;
+    pinnedAttachmentContext = undefined;
     running = undefined;
     store = undefined;
     if (sessionScope) {

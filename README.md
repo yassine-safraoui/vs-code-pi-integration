@@ -7,7 +7,7 @@ macOS and Windows are the primary targets. Development currently happens on macO
 ## Architecture
 
 - `packages/protocol` contains the Effect schemas, limits, registry paths, and cross-platform containment rules.
-- `pi-plugin` owns pending and previously used attachment state, the authenticated loopback server, working-directory lease, and prompt-time context injection.
+- `pi-plugin` owns pending and previously used attachment state, the authenticated loopback server, working-directory lease, and transient prompt-time context injection. Structured attachment data is encoded as TOON immediately before the user's prompt.
 - `vs-code-extension` discovers live Pi records, routes selections, and presents Pi's authoritative attachment state in an Activity Bar view.
 
 Plugin-enabled Pis register under `~/.pi-context/run/v3`. Records contain an ephemeral loopback endpoint, token, and five-minute heartbeat, never selected source. VS Code expires records whose heartbeat is at least six minutes old. Pending snapshots remain in Pi memory; previously used history is validated and reconstructed from Pi's own non-context session metadata.

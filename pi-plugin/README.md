@@ -4,7 +4,7 @@ This Pi extension owns the authoritative pending and previously used attachment 
 
 The authenticated `GET /v1/state` endpoint returns pending attachments and Pi-owned history for VS Code refreshes. Mutation responses return the same authoritative state after the mutation is applied. History deltas are validated and reconstructed from Pi custom session entries that do not enter model context; `/new` carries history forward, and `/resume` or `/tree` restores the selected thread or branch.
 
-The `input` hook stages pending IDs without transforming the user's text. `before_agent_start` atomically records the exact merged snapshots as previously used, stores the compact history delta in the hidden message details, injects the attachment content after Pi expands skills and templates, then removes it from pending state. Deleted or cleared pending attachments never enter history.
+The `input` hook stages pending IDs without transforming the user's text. After Pi expands skills and templates, `before_agent_start` atomically records the exact merged snapshots as previously used, persists only their compact history delta as non-context session metadata, pins their TOON encoding, and removes them from pending state. The `context` hook inserts that encoding transiently immediately before the user's prompt for every model call in the run. `agent_settled` clears the pin, so attachment text does not persist into later turns. Deleted or cleared pending attachments never enter history.
 
 History is newest-first and limited to 50 entries and 1 MiB of attachment text. VS Code can replay an exact saved snapshot with a fresh pending ID and capture timestamp. Pi's own widget and `/pi-context` manager continue to show pending attachments only.
 
