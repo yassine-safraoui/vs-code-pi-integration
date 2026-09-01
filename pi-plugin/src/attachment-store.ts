@@ -1,12 +1,16 @@
 import { Effect, Ref } from "effect";
+import { randomUUID } from "node:crypto";
 import {
   MAX_ATTACHMENT_BYTES,
   MAX_ATTACHMENTS,
+  MAX_HISTORY_BYTES,
+  MAX_HISTORY_ENTRIES,
   MAX_TOTAL_ATTACHMENT_BYTES,
   PROTOCOL_VERSION,
   ProtocolFailure,
   utf8ByteLength,
   validateAttachmentBatch,
+  type AttachmentHistoryEntry,
   type AttachmentSnapshot,
   type AttachmentState,
   type Mutation
@@ -14,18 +18,52 @@ import {
 
 interface StoreData {
   readonly revision: number;
-  readonly attachments: ReadonlyMap<string, AttachmentSnapshot>;
+  readonly attachments: ReadonlyMap<string, PendingAttachment>;
+  readonly history: ReadonlyArray<AttachmentHistoryEntry>;
+}
+
+interface PendingAttachment {
+  readonly attachment: AttachmentSnapshot;
+  readonly historyId?: string;
 }
 
 export interface AttachmentStore {
   readonly snapshot: Effect.Effect<AttachmentState>;
   readonly apply: (mutation: Mutation) => Effect.Effect<AttachmentState, ProtocolFailure>;
-  readonly consume: (ids: ReadonlyArray<string>) => Effect.Effect<AttachmentState>;
-  readonly select: (ids: ReadonlyArray<string>) => Effect.Effect<ReadonlyArray<AttachmentSnapshot>>;
+  readonly consumeForPrompt: (ids: ReadonlyArray<string>) => Effect.Effect<ConsumedAttachments>;
+  readonly replaceHistory: (history: ReadonlyArray<AttachmentHistoryEntry>) => Effect.Effect<AttachmentState>;
+}
+
+export interface AttachmentStoreOptions {
+  readonly now?: () => string;
+  readonly makeId?: () => string;
+  readonly initialHistory?: ReadonlyArray<AttachmentHistoryEntry>;
+}
+
+export interface ConsumedAttachments {
+  readonly attachments: ReadonlyArray<AttachmentSnapshot>;
+  readonly historyEntries: ReadonlyArray<AttachmentHistoryEntry>;
 }
 
 const sameAttachment = (left: AttachmentSnapshot, right: AttachmentSnapshot): boolean =>
   JSON.stringify(left) === JSON.stringify(right);
+
+const retainHistory = (
+  history: ReadonlyArray<AttachmentHistoryEntry>
+): ReadonlyArray<AttachmentHistoryEntry> => {
+  let retainedBytes = 0;
+  const seen = new Set<string>();
+  const retained: AttachmentHistoryEntry[] = [];
+  for (const entry of history) {
+    if (seen.has(entry.historyId)) continue;
+    const size = utf8ByteLength(entry.attachment.text);
+    if (retained.length >= MAX_HISTORY_ENTRIES || retainedBytes + size > MAX_HISTORY_BYTES) break;
+    retained.push(entry);
+    seen.add(entry.historyId);
+    retainedBytes += size;
+  }
+  return retained;
+};
 
 type Position = AttachmentSnapshot["range"]["start"];
 
@@ -155,79 +193,138 @@ const mergeOverlappingAttachments = (
 
 export const makeAttachmentStore = (
   instanceId: string,
-  onChange: (state: AttachmentState) => void = () => undefined
+  onChange: (state: AttachmentState) => void = () => undefined,
+  options: AttachmentStoreOptions = {}
 ): Effect.Effect<AttachmentStore> =>
   Effect.gen(function* () {
-    const state = yield* Ref.make<StoreData>({ revision: 0, attachments: new Map() });
+    const now = options.now ?? (() => new Date().toISOString());
+    const makeId = options.makeId ?? randomUUID;
+    const state = yield* Ref.make<StoreData>({
+      revision: 0,
+      attachments: new Map(),
+      history: retainHistory(options.initialHistory ?? [])
+    });
     const semaphore = yield* Effect.makeSemaphore(1);
     const toSnapshot = (data: StoreData): AttachmentState => ({
       protocolVersion: PROTOCOL_VERSION,
       revision: data.revision,
       instanceId,
-      attachments: [...data.attachments.values()]
+      attachments: [...data.attachments.values()].map(({ attachment }) => attachment),
+      history: data.history
     });
     const snapshot = Ref.get(state).pipe(Effect.map(toSnapshot));
+
+    const validatePending = (
+      attachments: ReadonlyMap<string, PendingAttachment>
+    ): Effect.Effect<void, ProtocolFailure> => Effect.gen(function* () {
+      const values = [...attachments.values()].map(({ attachment }) => attachment);
+      if (values.length > MAX_ATTACHMENTS) {
+        return yield* new ProtocolFailure({
+          code: "PAYLOAD_TOO_LARGE",
+          message: `At most ${MAX_ATTACHMENTS} attachments may be pending.`
+        });
+      }
+      const oversized = values.find((item) => utf8ByteLength(item.text) > MAX_ATTACHMENT_BYTES);
+      if (oversized) {
+        return yield* new ProtocolFailure({
+          code: "PAYLOAD_TOO_LARGE",
+          message: `${oversized.displayPath} exceeds the ${MAX_ATTACHMENT_BYTES}-byte attachment limit after merging.`
+        });
+      }
+      const total = values.reduce((sum, item) => sum + utf8ByteLength(item.text), 0);
+      if (total > MAX_TOTAL_ATTACHMENT_BYTES) {
+        return yield* new ProtocolFailure({
+          code: "PAYLOAD_TOO_LARGE",
+          message: `Pending attachments exceed ${MAX_TOTAL_ATTACHMENT_BYTES} bytes.`
+        });
+      }
+    });
+
+    const addAttachments = (
+      current: ReadonlyMap<string, PendingAttachment>,
+      incomingAttachments: ReadonlyArray<PendingAttachment>
+    ): Effect.Effect<{ readonly attachments: ReadonlyMap<string, PendingAttachment>; readonly changed: boolean }, ProtocolFailure> =>
+      Effect.gen(function* () {
+        const nextAttachments = new Map(current);
+        let changed = false;
+
+        yield* validateAttachmentBatch(incomingAttachments.map(({ attachment }) => attachment));
+        for (const incomingRecord of incomingAttachments) {
+          const attachment = incomingRecord.attachment;
+          const existingWithId = nextAttachments.get(attachment.id);
+          if (existingWithId && !sameAttachment(existingWithId.attachment, attachment)) {
+            return yield* new ProtocolFailure({
+              code: "INVALID_ATTACHMENT",
+              message: `Attachment ${attachment.id} was reused with different content.`
+            });
+          }
+          if (existingWithId) continue;
+
+          const overlapping = [...nextAttachments.values()].filter((candidate) =>
+            rangesOverlap(candidate.attachment, attachment)
+          );
+          if (overlapping.length === 0) {
+            nextAttachments.set(attachment.id, incomingRecord);
+            changed = true;
+            continue;
+          }
+
+          const survivor = overlapping[0]!;
+          let merged = yield* mergeOverlappingAttachments(survivor.attachment, attachment);
+          for (const candidate of overlapping.slice(1)) {
+            merged = yield* mergeOverlappingAttachments(merged, candidate.attachment);
+            nextAttachments.delete(candidate.attachment.id);
+          }
+          const sharedHistoryId = incomingRecord.historyId !== undefined &&
+            overlapping.every((candidate) => candidate.historyId === incomingRecord.historyId)
+            ? incomingRecord.historyId
+            : undefined;
+          const nextRecord: PendingAttachment = sharedHistoryId
+            ? { attachment: merged, historyId: sharedHistoryId }
+            : { attachment: merged };
+          const attachmentChanged = !sameAttachment(survivor.attachment, merged);
+          const lineageChanged = survivor.historyId !== sharedHistoryId;
+          if (attachmentChanged || lineageChanged) {
+            nextAttachments.set(survivor.attachment.id, nextRecord);
+          }
+          changed = changed || overlapping.length > 1 || attachmentChanged || lineageChanged;
+        }
+        yield* validatePending(nextAttachments);
+        return { attachments: nextAttachments, changed };
+      });
 
     const apply = (mutation: Mutation): Effect.Effect<AttachmentState, ProtocolFailure> =>
       semaphore.withPermits(1)(Effect.gen(function* () {
         const current = yield* Ref.get(state);
-        const nextAttachments = new Map(current.attachments);
+        let nextAttachments = new Map(current.attachments);
         let changed = false;
 
         if (mutation.type === "attachSelections") {
-          yield* validateAttachmentBatch(mutation.attachments);
-          for (const attachment of mutation.attachments) {
-            const existingWithId = nextAttachments.get(attachment.id);
-            if (existingWithId && !sameAttachment(existingWithId, attachment)) {
-              return yield* new ProtocolFailure({
-                code: "INVALID_ATTACHMENT",
-                message: `Attachment ${attachment.id} was reused with different content.`
-              });
-            }
-            if (existingWithId) continue;
-
-            const overlapping = [...nextAttachments.values()].filter((candidate) =>
-              rangesOverlap(candidate, attachment)
-            );
-            if (overlapping.length === 0) {
-              nextAttachments.set(attachment.id, attachment);
-              changed = true;
-              continue;
-            }
-
-            const survivor = overlapping[0]!;
-            let merged = yield* mergeOverlappingAttachments(survivor, attachment);
-            for (const candidate of overlapping.slice(1)) {
-              merged = yield* mergeOverlappingAttachments(merged, candidate);
-              nextAttachments.delete(candidate.id);
-            }
-            if (!sameAttachment(survivor, merged)) {
-              nextAttachments.set(survivor.id, merged);
-            }
-            changed = changed || overlapping.length > 1 || !sameAttachment(survivor, merged);
-          }
-          if (nextAttachments.size > MAX_ATTACHMENTS) {
-            return yield* new ProtocolFailure({
-              code: "PAYLOAD_TOO_LARGE",
-              message: `At most ${MAX_ATTACHMENTS} attachments may be pending.`
-            });
-          }
-          const oversized = [...nextAttachments.values()].find((item) =>
-            utf8ByteLength(item.text) > MAX_ATTACHMENT_BYTES
+          const result = yield* addAttachments(
+            current.attachments,
+            mutation.attachments.map((attachment) => ({ attachment }))
           );
-          if (oversized) {
+          nextAttachments = new Map(result.attachments);
+          changed = result.changed;
+        } else if (mutation.type === "reattachHistory") {
+          const entry = current.history.find(({ historyId }) => historyId === mutation.historyId);
+          if (!entry) {
             return yield* new ProtocolFailure({
-              code: "PAYLOAD_TOO_LARGE",
-              message: `${oversized.displayPath} exceeds the ${MAX_ATTACHMENT_BYTES}-byte attachment limit after merging.`
+              code: "INVALID_ATTACHMENT",
+              message: "The previously used attachment is no longer available. Refresh the attachment view."
             });
           }
-          const total = [...nextAttachments.values()].reduce((sum, item) => sum + utf8ByteLength(item.text), 0);
-          if (total > MAX_TOTAL_ATTACHMENT_BYTES) {
-            return yield* new ProtocolFailure({
-              code: "PAYLOAD_TOO_LARGE",
-              message: `Pending attachments exceed ${MAX_TOTAL_ATTACHMENT_BYTES} bytes.`
-            });
-          }
+          const replay: AttachmentSnapshot = {
+            ...entry.attachment,
+            id: makeId(),
+            capturedAt: now()
+          };
+          const result = yield* addAttachments(current.attachments, [{
+            attachment: replay,
+            historyId: entry.historyId
+          }]);
+          nextAttachments = new Map(result.attachments);
+          changed = result.changed;
         } else if (mutation.type === "removeAttachment") {
           changed = nextAttachments.delete(mutation.attachmentId);
         } else if (nextAttachments.size > 0) {
@@ -236,7 +333,7 @@ export const makeAttachmentStore = (
         }
 
         const next: StoreData = changed
-          ? { revision: current.revision + 1, attachments: nextAttachments }
+          ? { ...current, revision: current.revision + 1, attachments: nextAttachments }
           : current;
         if (changed) yield* Ref.set(state, next);
         const result = toSnapshot(next);
@@ -244,26 +341,57 @@ export const makeAttachmentStore = (
         return result;
       }));
 
-    const consume = (ids: ReadonlyArray<string>): Effect.Effect<AttachmentState> =>
+    const consumeForPrompt = (
+      ids: ReadonlyArray<string>
+    ): Effect.Effect<ConsumedAttachments> =>
       semaphore.withPermits(1)(Effect.gen(function* () {
         const current = yield* Ref.get(state);
         const attachments = new Map(current.attachments);
-        let changed = false;
-        for (const id of ids) changed = attachments.delete(id) || changed;
-        const next = changed
-          ? { revision: current.revision + 1, attachments }
-          : current;
-        if (changed) yield* Ref.set(state, next);
-        const result = toSnapshot(next);
-        if (changed) onChange(result);
-        return result;
+        const consumed = ids.flatMap((id) => {
+          const item = attachments.get(id);
+          return item ? [item] : [];
+        });
+        if (consumed.length === 0) return { attachments: [], historyEntries: [] };
+        for (const item of consumed) attachments.delete(item.attachment.id);
+
+        const usedAt = now();
+        const updatedHistoryIds = new Set(consumed.flatMap(({ historyId }) => historyId ? [historyId] : []));
+        const newEntries = consumed.map(({ attachment, historyId }): AttachmentHistoryEntry => ({
+          historyId: historyId ?? makeId(),
+          attachment,
+          usedAt
+        }));
+        const history = [
+          ...newEntries,
+          ...current.history.filter(({ historyId }) => !updatedHistoryIds.has(historyId))
+        ];
+        const retainedHistory = retainHistory(history);
+
+        const next: StoreData = {
+          revision: current.revision + 1,
+          attachments,
+          history: retainedHistory
+        };
+        yield* Ref.set(state, next);
+        onChange(toSnapshot(next));
+        return {
+          attachments: consumed.map(({ attachment }) => attachment),
+          historyEntries: newEntries
+        };
       }));
 
-    const select = (ids: ReadonlyArray<string>): Effect.Effect<ReadonlyArray<AttachmentSnapshot>> =>
-      Ref.get(state).pipe(Effect.map((current) => ids.flatMap((id) => {
-        const item = current.attachments.get(id);
-        return item ? [item] : [];
-      })));
+    const replaceHistory = (
+      history: ReadonlyArray<AttachmentHistoryEntry>
+    ): Effect.Effect<AttachmentState> => semaphore.withPermits(1)(Effect.gen(function* () {
+      const current = yield* Ref.get(state);
+      const next: StoreData = {
+        ...current,
+        revision: current.revision + 1,
+        history: retainHistory(history)
+      };
+      yield* Ref.set(state, next);
+      return toSnapshot(next);
+    }));
 
-    return { snapshot, apply, consume, select };
+    return { snapshot, apply, consumeForPrompt, replaceHistory };
   });

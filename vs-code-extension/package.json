@@ -20,6 +20,7 @@
     "onCommand:piContext.chooseTarget",
     "onCommand:piContext.clearAttachments",
     "onCommand:piContext.refreshAttachments",
+    "onCommand:piContext.reattachHistory",
     "onView:piContext.attachments",
     "onUri"
   ],
@@ -51,6 +52,11 @@
       {
         "command": "piContext.openAttachment",
         "title": "Pi Context: Open Attachment"
+      },
+      {
+        "command": "piContext.reattachHistory",
+        "title": "Pi Context: Reattach Previously Used Attachment",
+        "icon": "$(add)"
       }
     ],
     "viewsContainers": {
@@ -66,14 +72,14 @@
       "piContext": [
         {
           "id": "piContext.attachments",
-          "name": "Pending Attachments"
+          "name": "Attachments"
         }
       ]
     },
     "viewsWelcome": [
       {
         "view": "piContext.attachments",
-        "contents": "No pending attachments were found.\n[Refresh](command:piContext.refreshAttachments)"
+        "contents": "No running Pi Context sessions were found.\n[Refresh](command:piContext.refreshAttachments)"
       }
     ],
     "menus": {
@@ -89,6 +95,17 @@
           "command": "piContext.refreshAttachments",
           "when": "view == piContext.attachments",
           "group": "navigation"
+        }
+      ],
+      "view/item/context": [
+        {
+          "command": "piContext.reattachHistory",
+          "when": "view == piContext.attachments && viewItem == piContext.historyAttachment",
+          "group": "inline"
+        },
+        {
+          "command": "piContext.reattachHistory",
+          "when": "view == piContext.attachments && viewItem == piContext.historyAttachment"
         }
       ]
     }

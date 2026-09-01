@@ -5,6 +5,7 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { Effect, Schedule } from "effect";
 import {
+  DISCOVERY_HEARTBEAT_INTERVAL_MS,
   MAX_REQUEST_BYTES,
   PROTOCOL_VERSION,
   ProtocolFailure,
@@ -13,6 +14,7 @@ import {
   decodeDiscoveryRecord,
   decodeLeaseRecord,
   decodeMutation,
+  isDiscoveryRecordStale,
   registryPaths,
   type AttachmentSnapshot,
   type DiscoveryRecord,
@@ -33,6 +35,7 @@ interface StartOptions {
   readonly userHome?: string;
   readonly pid?: number;
   readonly startedAt?: string;
+  readonly heartbeatIntervalMs?: number;
 }
 
 const json = (response: ServerResponse, status: number, value: unknown): void => {
@@ -137,7 +140,7 @@ const acquireLease = async (
       const existingLease = await Effect.runPromise(decodeLeaseRecord(JSON.parse(await readFile(leasePath, "utf8"))));
       const recordPath = join(paths.instances, `${existingLease.instanceId}.json`);
       const record = await Effect.runPromise(decodeDiscoveryRecord(JSON.parse(await readFile(recordPath, "utf8"))));
-      active = await healthCheck(record);
+      active = !isDiscoveryRecordStale(record) && await healthCheck(record);
     } catch {
       active = false;
     }
@@ -277,12 +280,14 @@ export const startRegistryServer = (
         });
         const address = server.address();
         if (!address || typeof address === "string") throw new Error("Loopback listener did not receive a TCP port.");
+        const startedAt = options.startedAt ?? new Date().toISOString();
         record = {
           protocolVersion: PROTOCOL_VERSION,
           instanceId,
           canonicalWorkingDirectory,
           pid: options.pid ?? process.pid,
-          startedAt: options.startedAt ?? new Date().toISOString(),
+          startedAt,
+          lastActiveAt: new Date().toISOString(),
           host: "127.0.0.1",
           port: address.port,
           token
@@ -296,9 +301,22 @@ export const startRegistryServer = (
       }
 
       let closed = false;
+      let heartbeatWrite = Promise.resolve();
+      const heartbeat = setInterval(() => {
+        heartbeatWrite = heartbeatWrite.then(async () => {
+          if (closed || !record) return;
+          record = { ...record, lastActiveAt: new Date().toISOString() };
+          await atomicWrite(recordPath, record);
+        }).catch(() => {
+          // A missed write makes the record expire; the next interval retries it.
+        });
+      }, options.heartbeatIntervalMs ?? DISCOVERY_HEARTBEAT_INTERVAL_MS);
+      heartbeat.unref();
       const close = Effect.gen(function* () {
         if (closed) return;
         closed = true;
+        clearInterval(heartbeat);
+        yield* Effect.promise(() => heartbeatWrite);
         server.closeAllConnections();
         yield* Effect.async<void>((resume) => {
           server.close(() => resume(Effect.void));

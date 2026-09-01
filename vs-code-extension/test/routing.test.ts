@@ -11,11 +11,12 @@ const pi = (id: string, cwd: string): LivePi => {
     canonicalWorkingDirectory: cwd,
     pid: 100,
     startedAt: "2026-08-08T12:00:00.000Z",
+    lastActiveAt: new Date().toISOString(),
     host: "127.0.0.1",
     port: 12345,
     token: "secret"
   };
-  return { record, health: { protocolVersion: 1, instanceId: id, canonicalWorkingDirectory: cwd, pendingCount: 0 } };
+  return { record, health: { protocolVersion: PROTOCOL_VERSION, instanceId: id, canonicalWorkingDirectory: cwd, pendingCount: 0 } };
 };
 
 describe("routeToPi", () => {

@@ -21,7 +21,7 @@ import {
 } from "./discovery.js";
 import { routeToPi } from "./routing.js";
 import { captureSelections, snapshotsForTarget } from "./selection.js";
-import { AttachmentTreeProvider } from "./attachments-tree.js";
+import { AttachmentTreeProvider, type HistoryAttachmentNode } from "./attachments-tree.js";
 import { AttachmentGutter } from "./attachment-gutter.js";
 
 interface PiPickItem extends vscode.QuickPickItem {
@@ -229,6 +229,25 @@ const openAttachmentCommand = async (attachment: AttachmentSnapshot): Promise<vo
   }
 };
 
+const reattachHistoryCommand = async (node: HistoryAttachmentNode): Promise<void> => {
+  try {
+    const state = await runtime.runPromise(mutatePi(node.record, {
+      protocolVersion: PROTOCOL_VERSION,
+      requestId: randomUUID(),
+      type: "reattachHistory",
+      historyId: node.entry.historyId
+    }));
+    attachmentTree?.acceptState(node.record, state);
+    attachmentGutter?.acceptState(state);
+    rememberedInstanceId = node.record.instanceId;
+    await vscode.window.showInformationMessage(
+      `Reattached ${node.entry.attachment.displayPath} to Pi in ${node.record.canonicalWorkingDirectory} (${state.attachments.length} pending).`
+    );
+  } catch (cause) {
+    await showFailure(cause);
+  }
+};
+
 const refreshAttachmentsCommand = async (): Promise<void> => {
   try {
     await runtime.runPromise(refreshAttachmentState);
@@ -250,6 +269,7 @@ export function activate(context: vscode.ExtensionContext): void {
     vscode.commands.registerCommand("piContext.clearAttachments", clearAttachmentsCommand),
     vscode.commands.registerCommand("piContext.refreshAttachments", refreshAttachmentsCommand),
     vscode.commands.registerCommand("piContext.openAttachment", openAttachmentCommand),
+    vscode.commands.registerCommand("piContext.reattachHistory", reattachHistoryCommand),
     vscode.window.registerUriHandler({ handleUri: handleExtensionUri }),
     treeView,
     treeView.onDidChangeVisibility(({ visible }) => {

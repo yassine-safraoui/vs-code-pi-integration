@@ -35,7 +35,8 @@ const state = (
   protocolVersion: PROTOCOL_VERSION,
   instanceId,
   revision,
-  attachments
+  attachments,
+  history: []
 });
 
 test("coveredEditorLines returns every zero-based line containing selected text", () => {
