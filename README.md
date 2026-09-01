@@ -16,6 +16,8 @@ While attachments are pending, Pi shows their paths and ranges in a widget above
 
 The **Pending Attachments** view in VS Code fetches the current state from each live Pi using the authenticated `GET /v1/state` endpoint. Successful mutation responses also replace that Pi's displayed state, so the view never inserts an attachment optimistically. Selecting a tree item opens its file and restores the captured range.
 
+Attached source lines have a blue indicator in the editor gutter. The extension derives those indicators from the pending state already visible to VS Code and combines ranges from every listed Pi. Successful attachment and clear responses update the indicators immediately; Pi-side changes appear after the Pending Attachments view is refreshed.
+
 Pi coalesces overlapping selections from the same file and document version. Reattaching an already pending range is a no-op; a partial overlap expands the existing attachment, including transitively across a batch. Ranges that only touch remain separate. If overlapping snapshots came from different document versions or disagree in their shared text, Pi rejects the batch so it never creates a misleading mixed snapshot.
 
 ## Development

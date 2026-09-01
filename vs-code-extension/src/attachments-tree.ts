@@ -39,7 +39,10 @@ export class AttachmentTreeProvider implements vscode.TreeDataProvider<Attachmen
     const roots = states.map(({ record, state }): PiNode => ({
       type: "pi",
       record,
-      state
+      state: (() => {
+        const current = this.roots.find((root) => root.record.instanceId === record.instanceId);
+        return current && current.state.revision > state.revision ? current.state : state;
+      })()
     }));
     this.roots = roots.sort((left, right) =>
       left.record.canonicalWorkingDirectory.localeCompare(right.record.canonicalWorkingDirectory)
@@ -48,6 +51,8 @@ export class AttachmentTreeProvider implements vscode.TreeDataProvider<Attachmen
   }
 
   acceptState(record: DiscoveryRecord, state: AttachmentState): void {
+    const current = this.roots.find((root) => root.record.instanceId === record.instanceId);
+    if (current && current.state.revision > state.revision) return;
     const next: PiNode = { type: "pi", record, state };
     const existing = this.roots.findIndex((root) => root.record.instanceId === record.instanceId);
     const roots = existing < 0
