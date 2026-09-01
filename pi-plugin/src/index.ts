@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { Effect, Exit, Scope } from "effect";
-import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
-import type { AttachmentSnapshot } from "@pi-context/protocol";
+import { SessionManager, type ExtensionAPI, type ExtensionContext } from "@earendil-works/pi-coding-agent";
+import { PROTOCOL_VERSION, type AttachmentSnapshot } from "@pi-context/protocol";
 import type { AttachmentStore } from "./attachment-store.js";
 import { makeAttachmentStore } from "./attachment-store.js";
 import { AttachmentManagerComponent } from "./attachment-manager.js";
@@ -12,6 +12,13 @@ import {
 import { attachmentWidgetLines, describeAttachments, renderAttachmentContext } from "./prompt.js";
 import { startRegistryServer, type RunningRegistryServer } from "./registry-server.js";
 import { openAttachmentInVsCode } from "./vscode-opener.js";
+import {
+  attachmentHistoryDeltaType,
+  attachmentHistorySeedType,
+  historyDelta,
+  historySeed,
+  reconstructAttachmentHistory
+} from "./session-history.js";
 
 const uiKey = "pi-context";
 
@@ -42,7 +49,7 @@ export default function piContextPlugin(pi: ExtensionAPI): void {
       const snapshot = await Effect.runPromise(commandStore.snapshot);
       if (args.trim() === "clear") {
         await Effect.runPromise(commandStore.apply({
-          protocolVersion: 1,
+          protocolVersion: PROTOCOL_VERSION,
           requestId: randomUUID(),
           type: "clearAttachments"
         }));
@@ -58,7 +65,7 @@ export default function piContextPlugin(pi: ExtensionAPI): void {
         theme,
         {
           remove: (attachmentId) => Effect.runPromise(commandStore.apply({
-            protocolVersion: 1,
+            protocolVersion: PROTOCOL_VERSION,
             requestId: randomUUID(),
             type: "removeAttachment",
             attachmentId
@@ -71,14 +78,27 @@ export default function piContextPlugin(pi: ExtensionAPI): void {
     }
   });
 
-  pi.on("session_start", async (_event, ctx) => {
+  pi.on("session_start", async (event, ctx) => {
     activeContext = ctx;
     ctx.ui.setStatus(uiKey, undefined);
     ctx.ui.setWidget(uiKey, undefined);
     stagedAttachmentIds = undefined;
     pinnedAttachmentContext = undefined;
     const instanceId = randomUUID();
-    store = await Effect.runPromise(makeAttachmentStore(instanceId, (state) => updateWidget(state.attachments)));
+    let history = reconstructAttachmentHistory(ctx.sessionManager.getBranch());
+    if (event.reason === "new" && event.previousSessionFile) {
+      try {
+        history = reconstructAttachmentHistory(SessionManager.open(event.previousSessionFile).getBranch());
+      } catch {
+        history = [];
+      }
+      if (history.length > 0) pi.appendEntry(attachmentHistorySeedType, historySeed(history));
+    }
+    store = await Effect.runPromise(makeAttachmentStore(
+      instanceId,
+      (state) => updateWidget(state.attachments),
+      { initialHistory: history }
+    ));
     sessionScope = await Effect.runPromise(Scope.make());
     const acquired = startRegistryServer(ctx.cwd, store, { instanceId }).pipe(
       Effect.acquireRelease((server) => server.close),
@@ -92,6 +112,20 @@ export default function piContextPlugin(pi: ExtensionAPI): void {
     }
     running = result.right;
     updateWidget([]);
+  });
+
+  pi.on("session_before_switch", async (event, ctx) => {
+    if (event.reason !== "new" || !store) return;
+    const snapshot = await Effect.runPromise(store.snapshot);
+    // Persist the active /tree leaf as the file's latest branch before Pi
+    // replaces the session runtime. Reopening previousSessionFile during the
+    // next session_start can then reconstruct the branch the user selected.
+    pi.appendEntry(attachmentHistorySeedType, historySeed(snapshot.history));
+  });
+
+  pi.on("session_tree", async (_event, ctx) => {
+    if (!store) return;
+    await Effect.runPromise(store.replaceHistory(reconstructAttachmentHistory(ctx.sessionManager.getBranch())));
   });
 
   pi.on("input", async (event) => {
@@ -110,13 +144,13 @@ export default function piContextPlugin(pi: ExtensionAPI): void {
     if (!store || !stagedAttachmentIds?.length) return;
     const ids = stagedAttachmentIds;
     stagedAttachmentIds = undefined;
-    const attachments = await Effect.runPromise(store.select(ids));
-    if (attachments.length === 0) return;
+    const consumed = await Effect.runPromise(store.consumeForPrompt(ids));
+    if (consumed.attachments.length === 0) return;
+    pi.appendEntry(attachmentHistoryDeltaType, historyDelta(consumed.historyEntries));
     pinnedAttachmentContext = {
       prompt: event.prompt,
-      content: renderAttachmentContext(attachments)
+      content: renderAttachmentContext(consumed.attachments)
     };
-    await Effect.runPromise(store.consume(ids));
   });
 
   pi.on("context", (event) => {
