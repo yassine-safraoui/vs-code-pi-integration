@@ -3,12 +3,16 @@ import { realpath } from "node:fs/promises";
 import { homedir } from "node:os";
 import * as nodePath from "node:path";
 
-export const PROTOCOL_VERSION = 1 as const;
+export const PROTOCOL_VERSION = 3 as const;
+export const DISCOVERY_HEARTBEAT_INTERVAL_MS = 5 * 60 * 1000;
+export const DISCOVERY_STALE_AFTER_MS = 6 * 60 * 1000;
 export const VSCODE_EXTENSION_ID = "pi-context.pi-context-vscode";
 export const VSCODE_OPEN_ATTACHMENT_PATH = "/open-attachment";
 export const MAX_ATTACHMENTS = 20;
 export const MAX_ATTACHMENT_BYTES = 64 * 1024;
 export const MAX_TOTAL_ATTACHMENT_BYTES = 256 * 1024;
+export const MAX_HISTORY_ENTRIES = 50;
+export const MAX_HISTORY_BYTES = 1024 * 1024;
 export const MAX_REQUEST_BYTES = 320 * 1024;
 
 const PositiveInteger = Schema.Int.pipe(Schema.greaterThanOrEqualTo(1));
@@ -58,6 +62,13 @@ export const AttachmentSnapshotSchema = Schema.Struct({
 
 export type AttachmentSnapshot = typeof AttachmentSnapshotSchema.Type;
 
+export const AttachmentHistoryEntrySchema = Schema.Struct({
+  historyId: Schema.UUID,
+  attachment: AttachmentSnapshotSchema,
+  usedAt: IsoTimestamp
+});
+export type AttachmentHistoryEntry = typeof AttachmentHistoryEntrySchema.Type;
+
 export const OpenAttachmentRequestSchema = Schema.Struct({
   protocolVersion: Schema.Literal(PROTOCOL_VERSION),
   fileUri: FileUri,
@@ -84,10 +95,16 @@ export const ClearAttachmentsMutationSchema = Schema.Struct({
   ...MutationBase,
   type: Schema.Literal("clearAttachments")
 });
+export const ReattachHistoryMutationSchema = Schema.Struct({
+  ...MutationBase,
+  type: Schema.Literal("reattachHistory"),
+  historyId: Schema.UUID
+});
 export const MutationSchema = Schema.Union(
   AttachSelectionsMutationSchema,
   RemoveAttachmentMutationSchema,
-  ClearAttachmentsMutationSchema
+  ClearAttachmentsMutationSchema,
+  ReattachHistoryMutationSchema
 );
 export type Mutation = typeof MutationSchema.Type;
 
@@ -95,7 +112,8 @@ export const AttachmentStateSchema = Schema.Struct({
   protocolVersion: Schema.Literal(PROTOCOL_VERSION),
   revision: NonNegativeInteger,
   instanceId: Schema.UUID,
-  attachments: Schema.Array(AttachmentSnapshotSchema)
+  attachments: Schema.Array(AttachmentSnapshotSchema),
+  history: Schema.Array(AttachmentHistoryEntrySchema)
 });
 export type AttachmentState = typeof AttachmentStateSchema.Type;
 
@@ -105,11 +123,17 @@ export const DiscoveryRecordSchema = Schema.Struct({
   canonicalWorkingDirectory: NonEmptyString,
   pid: PositiveInteger,
   startedAt: IsoTimestamp,
+  lastActiveAt: IsoTimestamp,
   host: Schema.Literal("127.0.0.1"),
   port: Schema.Int.pipe(Schema.between(1, 65535)),
   token: NonEmptyString
 });
 export type DiscoveryRecord = typeof DiscoveryRecordSchema.Type;
+
+export const isDiscoveryRecordStale = (
+  record: Pick<DiscoveryRecord, "lastActiveAt">,
+  now = Date.now()
+): boolean => now - Date.parse(record.lastActiveAt) >= DISCOVERY_STALE_AFTER_MS;
 
 export const LeaseRecordSchema = Schema.Struct({
   protocolVersion: Schema.Literal(PROTOCOL_VERSION),
@@ -312,7 +336,7 @@ export interface RegistryPaths {
 }
 
 export const registryPaths = (userHome = homedir()): RegistryPaths => {
-  const root = nodePath.join(userHome, ".pi-context", "run", "v1");
+  const root = nodePath.join(userHome, ".pi-context", "run", `v${PROTOCOL_VERSION}`);
   return {
     root,
     instances: nodePath.join(root, "instances"),

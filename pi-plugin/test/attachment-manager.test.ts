@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
 import { describe, it } from "node:test";
-import type { AttachmentSnapshot, AttachmentState } from "@pi-context/protocol";
+import { PROTOCOL_VERSION, type AttachmentSnapshot, type AttachmentState } from "@pi-context/protocol";
 import type { Theme } from "@earendil-works/pi-coding-agent";
 import { AttachmentManagerComponent } from "../src/attachment-manager.js";
 
@@ -31,7 +31,7 @@ describe("AttachmentManagerComponent", () => {
     const component = new AttachmentManagerComponent([selected], theme, {
       remove: async (attachmentId): Promise<AttachmentState> => {
         removedId = attachmentId;
-        return { protocolVersion: 1, revision: 2, instanceId: randomUUID(), attachments: [] };
+        return { protocolVersion: PROTOCOL_VERSION, revision: 2, instanceId: randomUUID(), attachments: [], history: [] };
       },
       open: async () => undefined,
       close: () => undefined,
