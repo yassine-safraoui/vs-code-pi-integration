@@ -5,6 +5,10 @@ import type { AttachmentSnapshot } from "@pi-context/protocol";
 import type { AttachmentStore } from "./attachment-store.js";
 import { makeAttachmentStore } from "./attachment-store.js";
 import { AttachmentManagerComponent } from "./attachment-manager.js";
+import {
+  injectAttachmentContextBeforePrompt,
+  type PinnedAttachmentContext
+} from "./agent-context.js";
 import { attachmentWidgetLines, describeAttachments, renderAttachmentContext } from "./prompt.js";
 import { startRegistryServer, type RunningRegistryServer } from "./registry-server.js";
 import { openAttachmentInVsCode } from "./vscode-opener.js";
@@ -17,6 +21,7 @@ export default function piContextPlugin(pi: ExtensionAPI): void {
   let running: RunningRegistryServer | undefined;
   let sessionScope: Scope.CloseableScope | undefined;
   let stagedAttachmentIds: ReadonlyArray<string> | undefined;
+  let pinnedAttachmentContext: PinnedAttachmentContext | undefined;
 
   const updateWidget = (attachments: ReadonlyArray<AttachmentSnapshot>): void => {
     activeContext?.ui.setWidget(
@@ -71,6 +76,7 @@ export default function piContextPlugin(pi: ExtensionAPI): void {
     ctx.ui.setStatus(uiKey, undefined);
     ctx.ui.setWidget(uiKey, undefined);
     stagedAttachmentIds = undefined;
+    pinnedAttachmentContext = undefined;
     const instanceId = randomUUID();
     store = await Effect.runPromise(makeAttachmentStore(instanceId, (state) => updateWidget(state.attachments)));
     sessionScope = await Effect.runPromise(Scope.make());
@@ -93,27 +99,35 @@ export default function piContextPlugin(pi: ExtensionAPI): void {
       return { action: "continue" };
     }
     const snapshot = await Effect.runPromise(store.snapshot);
+    pinnedAttachmentContext = undefined;
     stagedAttachmentIds = snapshot.attachments.length > 0
       ? snapshot.attachments.map((attachment) => attachment.id)
       : undefined;
     return { action: "continue" };
   });
 
-  pi.on("before_agent_start", async () => {
+  pi.on("before_agent_start", async (event) => {
     if (!store || !stagedAttachmentIds?.length) return;
     const ids = stagedAttachmentIds;
     stagedAttachmentIds = undefined;
     const attachments = await Effect.runPromise(store.select(ids));
     if (attachments.length === 0) return;
-    await Effect.runPromise(store.consume(ids));
-    return {
-      message: {
-        customType: "pi-context.attachments",
-        content: renderAttachmentContext(attachments),
-        display: false,
-        details: { attachmentIds: ids }
-      }
+    pinnedAttachmentContext = {
+      prompt: event.prompt,
+      content: renderAttachmentContext(attachments)
     };
+    await Effect.runPromise(store.consume(ids));
+  });
+
+  pi.on("context", (event) => {
+    if (!pinnedAttachmentContext) return;
+    return {
+      messages: injectAttachmentContextBeforePrompt(event.messages, pinnedAttachmentContext)
+    };
+  });
+
+  pi.on("agent_settled", () => {
+    pinnedAttachmentContext = undefined;
   });
 
   pi.on("session_shutdown", async () => {
@@ -121,6 +135,7 @@ export default function piContextPlugin(pi: ExtensionAPI): void {
     activeContext?.ui.setWidget(uiKey, undefined);
     activeContext = undefined;
     stagedAttachmentIds = undefined;
+    pinnedAttachmentContext = undefined;
     running = undefined;
     store = undefined;
     if (sessionScope) {

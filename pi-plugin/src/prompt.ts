@@ -1,4 +1,5 @@
 import type { AttachmentSnapshot } from "@pi-context/protocol";
+import { encode } from "@toon-format/toon";
 
 const compactRange = (attachment: AttachmentSnapshot): string => {
   const { start, end } = attachment.range;
@@ -22,8 +23,8 @@ export const describeAttachments = (attachments: ReadonlyArray<AttachmentSnapsho
 };
 
 export const renderAttachmentContext = (attachments: ReadonlyArray<AttachmentSnapshot>): string => {
-  const blocks = attachments.map((attachment) => {
-    const metadata = JSON.stringify({
+  const data = {
+    attachments: attachments.map((attachment) => ({
       id: attachment.id,
       fileUri: attachment.fileUri,
       path: attachment.displayPath,
@@ -32,18 +33,16 @@ export const renderAttachmentContext = (attachments: ReadonlyArray<AttachmentSna
       languageId: attachment.languageId,
       documentVersion: attachment.documentVersion,
       dirty: attachment.dirty,
-      capturedAt: attachment.capturedAt
-    });
-    return [
-      `<<<PI_CONTEXT_ATTACHMENT_BEGIN ${metadata}>>>`,
-      attachment.text,
-      `<<<PI_CONTEXT_ATTACHMENT_END ${attachment.id}>>>`
-    ].join("\n");
-  });
+      capturedAt: attachment.capturedAt,
+      text: attachment.text
+    }))
+  };
   return [
     "The user explicitly attached these verbatim editor snapshots as source context.",
     "Files marked outside are outside Pi's working directory and may require authorization for later file operations.",
-    ...blocks,
-    "<<<PI_CONTEXT_ATTACHMENTS_END>>>"
+    "The structured attachment data is encoded as TOON:",
+    "```toon",
+    encode(data),
+    "```"
   ].join("\n");
 };

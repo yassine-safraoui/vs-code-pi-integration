@@ -4,7 +4,7 @@ This Pi extension owns the authoritative pending-attachment set and advertises i
 
 The authenticated `GET /v1/state` endpoint returns the current pending attachment state for VS Code refreshes. Mutation responses return the same authoritative state after the mutation is applied.
 
-The `input` hook stages pending IDs without transforming the user's text. `before_agent_start` injects the exact snapshots as a hidden persistent custom message after Pi expands skills and templates, then consumes them.
+The `input` hook stages pending IDs without transforming the user's text. After Pi expands skills and templates, `before_agent_start` pins, serializes, and consumes the exact snapshots. The `context` hook inserts their TOON encoding transiently immediately before the user's prompt for every model call in that run. `agent_settled` clears the pin, so attachment text does not persist into later turns.
 
 Pending attachments are shown in a passive widget above Pi's prompt editor. Every row includes the inside/outside relationship, display path, and complete start/end coordinates. The footer is left untouched.
 

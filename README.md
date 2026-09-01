@@ -7,7 +7,7 @@ macOS and Windows are the primary targets. Development currently happens on macO
 ## Architecture
 
 - `packages/protocol` contains the Effect schemas, limits, registry paths, and cross-platform containment rules.
-- `pi-plugin` owns pending attachment state, the authenticated loopback server, working-directory lease, and prompt-time context injection.
+- `pi-plugin` owns pending attachment state, the authenticated loopback server, working-directory lease, and transient prompt-time context injection. Structured attachment data is encoded as TOON immediately before the user's prompt.
 - `vs-code-extension` discovers live Pi records, routes selections, and presents Pi's authoritative pending state in an Activity Bar view.
 
 Plugin-enabled Pis register under `~/.pi-context/run/v1`. Records contain an ephemeral loopback endpoint and token, never selected source. Pending source remains in Pi memory until it is injected into an accepted turn.

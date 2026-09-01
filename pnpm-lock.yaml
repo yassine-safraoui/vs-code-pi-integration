@@ -36,6 +36,9 @@ importers:
       '@pi-context/protocol':
         specifier: workspace:*
         version: link:../packages/protocol
+      '@toon-format/toon':
+        specifier: 4.1.1
+        version: 4.1.1
       effect:
         specifier: 3.22.1
         version: 3.22.1
@@ -670,6 +673,9 @@ packages:
 
   '@textlint/types@15.8.0':
     resolution: {integrity: sha512-Anhc6y5736YIsvqae0U6k0YmB2M/QVHkEeOv2aydAn/WIkdI69dCOiDbe3/+RagS3qstFTSFWJzNRA2lUjv19w==}
+
+  '@toon-format/toon@4.1.1':
+    resolution: {integrity: sha512-SGCkS7IjVpwRmGPgnY8ENKpAf0EdAnZDOQkvFW0d2cgOpdn9FEFl7sTgryESyypXrWr0YajHGpwsAUX4zw9ZvA==}
 
   '@types/node@22.20.1':
     resolution: {integrity: sha512-EANqOCF9QFyra+4pfxUcX9STKJpCLjMbObVzljIJomAWSnuSIEAvyzEU53GaajbXJEgdh0iEcPL+DGvpUd4k1Q==}
@@ -2655,6 +2661,8 @@ snapshots:
   '@textlint/types@15.8.0':
     dependencies:
       '@textlint/ast-node-types': 15.8.0
+
+  '@toon-format/toon@4.1.1': {}
 
   '@types/node@22.20.1':
     dependencies:
