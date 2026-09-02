@@ -18,6 +18,8 @@ The **Attachments** view in VS Code shows separate **Pending** and **Previously 
 
 Only merged snapshots consumed by an accepted prompt enter history; deleting or clearing pending items does not. Explicitly replaying and sending a history item updates that entry and moves it to the top, while independent captures remain separate across prompts. Pi retains the newest 50 entries up to 1 MiB of attachment text. History follows `/new` and is restored when a previous thread or tree branch is revisited.
 
+Attached source lines have a blue indicator in the editor gutter. The extension derives those indicators from the pending state already visible to VS Code and combines ranges from every listed Pi. Successful attachment and clear responses update the indicators immediately; Pi-side changes appear after the Pending Attachments view is refreshed.
+
 Pi coalesces overlapping selections from the same file and document version. Reattaching an already pending range is a no-op; a partial overlap expands the existing attachment, including transitively across a batch. Ranges that only touch remain separate. If overlapping snapshots came from different document versions or disagree in their shared text, Pi rejects the batch so it never creates a misleading mixed snapshot.
 
 ## Development

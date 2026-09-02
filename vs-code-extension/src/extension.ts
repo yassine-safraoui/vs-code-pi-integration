@@ -22,6 +22,7 @@ import {
 import { routeToPi } from "./routing.js";
 import { captureSelections, snapshotsForTarget } from "./selection.js";
 import { AttachmentTreeProvider, type HistoryAttachmentNode } from "./attachments-tree.js";
+import { AttachmentGutter } from "./attachment-gutter.js";
 
 interface PiPickItem extends vscode.QuickPickItem {
   readonly pi?: LivePi;
@@ -32,6 +33,7 @@ const AppLive = Layer.merge(DiscoveryLive(), PiClientLive);
 const runtime = ManagedRuntime.make(AppLive);
 let rememberedInstanceId: string | undefined;
 let attachmentTree: AttachmentTreeProvider | undefined;
+let attachmentGutter: AttachmentGutter | undefined;
 
 const showFailure = async (cause: unknown): Promise<void> => {
   const message = cause instanceof ProtocolFailure || cause instanceof Error
@@ -86,7 +88,10 @@ const refreshAttachmentState = Effect.gen(function* () {
     )),
     { concurrency: "unbounded" }
   );
-  yield* Effect.sync(() => attachmentTree?.replaceStates(states));
+  yield* Effect.sync(() => {
+    attachmentTree?.replaceStates(states);
+    attachmentGutter?.replaceStates(states.map(({ state }) => state));
+  });
 });
 
 const chooseTargetCommand = async (): Promise<void> => {
@@ -136,6 +141,7 @@ const attachSelectionsCommand = async (): Promise<void> => {
     };
     const state = await runtime.runPromise(mutatePi(target.record, mutation));
     attachmentTree?.acceptState(target.record, state);
+    attachmentGutter?.acceptState(state);
     rememberedInstanceId = target.record.instanceId;
     await vscode.window.showInformationMessage(
       `Attached ${attachments.length} selection${attachments.length === 1 ? "" : "s"} to Pi in ${target.record.canonicalWorkingDirectory} (${state.attachments.length} pending).`
@@ -164,6 +170,7 @@ const clearAttachmentsCommand = async (): Promise<void> => {
     if (!target) return;
     const state = await runtime.runPromise(mutatePi(target.record, clearMutation()));
     attachmentTree?.acceptState(target.record, state);
+    attachmentGutter?.acceptState(state);
     await vscode.window.showInformationMessage(`Cleared Pi Context attachments in ${target.record.canonicalWorkingDirectory}.`);
   } catch (cause) {
     await showFailure(cause);
@@ -231,6 +238,7 @@ const reattachHistoryCommand = async (node: HistoryAttachmentNode): Promise<void
       historyId: node.entry.historyId
     }));
     attachmentTree?.acceptState(node.record, state);
+    attachmentGutter?.acceptState(state);
     rememberedInstanceId = node.record.instanceId;
     await vscode.window.showInformationMessage(
       `Reattached ${node.entry.attachment.displayPath} to Pi in ${node.record.canonicalWorkingDirectory} (${state.attachments.length} pending).`
@@ -250,6 +258,7 @@ const refreshAttachmentsCommand = async (): Promise<void> => {
 
 export function activate(context: vscode.ExtensionContext): void {
   attachmentTree = new AttachmentTreeProvider();
+  attachmentGutter = new AttachmentGutter(vscode.Uri.joinPath(context.extensionUri, "media", "attached-range.svg"));
   const treeView = vscode.window.createTreeView("piContext.attachments", {
     treeDataProvider: attachmentTree,
     showCollapseAll: true
@@ -267,6 +276,7 @@ export function activate(context: vscode.ExtensionContext): void {
       if (visible) void refreshAttachmentsCommand();
     }),
     attachmentTree,
+    attachmentGutter,
     { dispose: () => { void runtime.dispose(); } }
   );
   if (treeView.visible) void refreshAttachmentsCommand();

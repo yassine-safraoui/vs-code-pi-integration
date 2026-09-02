@@ -15,6 +15,8 @@ The Pi Context Activity Bar contains an **Attachments** tree grouped by live Pi 
 
 Previously used entries are the exact merged snapshots consumed by sent prompts. Use the inline add action or the item context menu to reattach one to its owning Pi. The saved history item stays visible; after its replay is sent, it moves to the top. History follows Pi's `/new`, `/resume`, and tree navigation through Pi-owned session metadata and is not persisted by VS Code.
 
+Every line covered by a pending attachment has a blue gutter indicator. Indicators use the same pending state displayed by the extension, update immediately from successful attachment and clear responses, and reconcile Pi-side removals or prompt consumption when the Pending Attachments view is refreshed.
+
 The remembered Pi is held only in memory for the current VS Code window. **Automatic routing** in the target picker clears it.
 
 The extension also handles `vscode://pi-context.pi-context-vscode/open-attachment` links emitted by the local Pi plugin. It opens the file and restores the captured range as the active selection, clamping the range safely if the document changed after capture.

@@ -5,5 +5,5 @@
     "rootDir": ".",
     "outDir": ".generated-tests"
   },
-  "include": ["src/discovery.ts", "src/routing.ts", "test"]
+  "include": ["src/attachment-indicator-state.ts", "src/discovery.ts", "src/routing.ts", "test"]
 }
