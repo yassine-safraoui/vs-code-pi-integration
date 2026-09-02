@@ -20,6 +20,8 @@ Only merged snapshots consumed by an accepted prompt enter history; deleting or 
 
 Pending attachments follow `/new`, `/resume`, and `/reload` within the current Pi process. A fresh unsaved chat uses a singleton **New chat** slot until Pi creates a resumable session; `/tree` keeps the current session's pending state, while `/fork` deliberately starts empty. Up to 20 inactive conversations and 5 MiB of attachment text are retained with least-recently-used eviction. Pending state does not survive a Pi restart.
 
+Attached source lines have a blue indicator in the editor gutter. The extension derives those indicators from the pending state already visible to VS Code and combines ranges from every listed Pi. Successful attachment and clear responses update the indicators immediately; Pi-side changes appear after the Pending Attachments view is refreshed.
+
 Pi coalesces overlapping selections from the same file and document version. Reattaching an already pending range is a no-op; a partial overlap expands the existing attachment, including transitively across a batch. Ranges that only touch remain separate. If overlapping snapshots came from different document versions or disagree in their shared text, Pi rejects the batch so it never creates a misleading mixed snapshot.
 
 ## Development
