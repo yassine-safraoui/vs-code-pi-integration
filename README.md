@@ -16,6 +16,8 @@ While attachments are pending, Pi shows their paths and ranges in a widget above
 
 The **Attachments** view in VS Code identifies the active conversation and shows its separate **Pending** and **Previously Used** sections for each live Pi. A collapsed **Other Sessions** section lists only the title and pending count of inactive conversations; switching and attachment management remain in Pi. The view fetches state using the authenticated `GET /v1/state` endpoint, and successful mutation responses replace that Pi's displayed state so the view never changes optimistically. Selecting an active-conversation item opens its file and restores the captured range. Previously used items have an inline reattach action that restores the exact saved snapshot to pending state.
 
+For discovery troubleshooting, run **Pi Context: Show Logs** from the VS Code Command Palette. It opens the dedicated **Pi Context** Output channel with registry paths, record validation, health checks, protocol identities, refreshes, routing decisions, and request results. The Pi plugin emits matching `[pi-context]` lifecycle and registry diagnostics in Pi's terminal. Neither side logs registry tokens, authorization headers, or attachment text.
+
 Only merged snapshots consumed by an accepted prompt enter history; deleting or clearing pending items does not. Explicitly replaying and sending a history item updates that entry and moves it to the top, while independent captures remain separate across prompts. Pi retains the newest 50 entries up to 1 MiB of attachment text. History follows `/new` and is restored when a previous thread or tree branch is revisited.
 
 Pending attachments follow `/new`, `/resume`, and `/reload` within the current Pi process. A fresh unsaved chat uses a singleton **New chat** slot until Pi creates a resumable session; `/tree` keeps the current session's pending state, while `/fork` deliberately starts empty. Up to 20 inactive conversations and 5 MiB of attachment text are retained with least-recently-used eviction. Pending state does not survive a Pi restart.
@@ -47,6 +49,7 @@ pi --extension /absolute/path/to/vs-code-pi-integration/pi-plugin/src/index.ts
 - **Pi Context: Choose Target Pi** selects a live Pi to remember for this VS Code window or restores automatic routing.
 - **Pi Context: Clear Pending Attachments** clears the remembered Pi, the sole live Pi, or a Pi selected from the picker.
 - **Pi Context: Refresh Pending Attachments** re-discovers live Pis and fetches their authoritative attachment state.
+- **Pi Context: Show Logs** opens the dedicated diagnostic Output channel.
 - **Pi Context: Reattach Previously Used Attachment** is exposed as an inline and context-menu action on history items.
 
 Files inside the chosen Pi working directory receive compact relative labels. Outside files are still attached using canonical absolute paths, followed by a non-blocking warning that later reads or edits may require authorization.

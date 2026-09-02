@@ -20,6 +20,7 @@
     "onCommand:piContext.chooseTarget",
     "onCommand:piContext.clearAttachments",
     "onCommand:piContext.refreshAttachments",
+    "onCommand:piContext.showLogs",
     "onCommand:piContext.reattachHistory",
     "onView:piContext.attachments",
     "onUri"
@@ -48,6 +49,10 @@
         "command": "piContext.refreshAttachments",
         "title": "Pi Context: Refresh Pending Attachments",
         "icon": "$(refresh)"
+      },
+      {
+        "command": "piContext.showLogs",
+        "title": "Pi Context: Show Logs"
       },
       {
         "command": "piContext.openAttachment",

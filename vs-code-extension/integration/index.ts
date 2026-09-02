@@ -16,6 +16,7 @@ export async function run(): Promise<void> {
   assert.ok(commands.includes("piContext.chooseTarget"));
   assert.ok(commands.includes("piContext.clearAttachments"));
   assert.ok(commands.includes("piContext.refreshAttachments"));
+  assert.ok(commands.includes("piContext.showLogs"));
   assert.ok(commands.includes("piContext.openAttachment"));
   assert.ok(commands.includes("piContext.reattachHistory"));
 

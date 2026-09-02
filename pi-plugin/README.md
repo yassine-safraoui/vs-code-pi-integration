@@ -10,6 +10,8 @@ History is newest-first and limited to 50 entries and 1 MiB of attachment text. 
 
 Pending attachments are scoped to the Pi conversation being viewed. A fresh session that has not produced a resumable session file uses one process-local **New chat** slot; after the first completed response it is promoted to Pi's real session ID. `/new`, `/resume`, and `/reload` restore the corresponding checkpoint, `/tree` retains the same session checkpoint, and `/fork` starts empty. Inactive checkpoints use an LRU cap of 20 conversations and 5 MiB of attachment text. They survive plugin reloads but are intentionally discarded when Pi exits.
 
+The plugin writes `[pi-context]` diagnostics to Pi's terminal. These cover session lifecycle, canonical working-directory resolution, protocol and registry paths, lease acquisition and stale recovery, loopback binding, record publication and heartbeat, health/state/mutation requests, and cleanup. Registry tokens, authorization headers, prompt content, and attachment text are never logged.
+
 Pending attachments are shown in a passive widget above Pi's prompt editor. Every row includes the inside/outside relationship, display path, and complete start/end coordinates. The footer is left untouched.
 
 Run `/pi-context` to open the attachment manager:

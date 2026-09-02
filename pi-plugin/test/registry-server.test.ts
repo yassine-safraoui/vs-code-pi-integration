@@ -9,9 +9,16 @@ import { Effect } from "effect";
 import { PROTOCOL_VERSION, canonicalizePath, registryPaths } from "@pi-context/protocol";
 import { makeAttachmentStore } from "../src/attachment-store.js";
 import { startRegistryServer } from "../src/registry-server.js";
+import type { PiContextLogger } from "../src/logging.js";
 
 describe("registry server", () => {
   it("publishes an authenticated health endpoint and cleans up", async () => {
+    const loggedEvents: string[] = [];
+    const logger: PiContextLogger = {
+      info: (event) => { loggedEvents.push(event); },
+      warn: (event) => { loggedEvents.push(event); },
+      error: (event) => { loggedEvents.push(event); }
+    };
     const userHome = await mkdtemp(join(tmpdir(), "pi-context-home-"));
     const cwd = await mkdtemp(join(tmpdir(), "pi-context-cwd-"));
     const instanceId = randomUUID();
@@ -19,7 +26,8 @@ describe("registry server", () => {
     const running = await Effect.runPromise(startRegistryServer(cwd, store, {
       userHome,
       instanceId,
-      heartbeatIntervalMs: 10
+      heartbeatIntervalMs: 10,
+      logger
     }));
     const instancePath = join(registryPaths(userHome).instances, `${instanceId}.json`);
     const initialRecord = JSON.parse(await readFile(instancePath, "utf8")) as { instanceId: string; lastActiveAt: string };
@@ -125,6 +133,13 @@ describe("registry server", () => {
     assert.equal((await wrongVersion.json() as { error: { code: string } }).error.code, "VERSION_MISMATCH");
     await Effect.runPromise(running.close);
     await assert.rejects(readFile(instancePath, "utf8"), { code: "ENOENT" });
+    assert.ok(loggedEvents.includes("registry.start.paths_resolved"));
+    assert.ok(loggedEvents.includes("registry.lease.acquire.success"));
+    assert.ok(loggedEvents.includes("registry.record.published"));
+    assert.ok(loggedEvents.includes("registry.http.health"));
+    assert.ok(loggedEvents.includes("registry.http.mutation_success"));
+    assert.ok(loggedEvents.includes("registry.heartbeat.published"));
+    assert.ok(loggedEvents.includes("registry.close.complete"));
   });
 
   it("rejects a second live Pi for the same canonical directory", async () => {
