@@ -47,6 +47,13 @@ export async function run(): Promise<void> {
     protocolVersion: PROTOCOL_VERSION,
     revision: 2,
     instanceId,
+    activeConversation: { kind: "session", sessionId: "session-active", title: "Active work" },
+    inactiveConversations: [{
+      kind: "session",
+      sessionId: "session-inactive",
+      title: "Dormant work",
+      pendingCount: 3
+    }],
     attachments: [],
     history: [{
       historyId: randomUUID(),
@@ -58,10 +65,18 @@ export async function run(): Promise<void> {
   provider.replaceStates([{ record, state }]);
   const root = provider.getChildren()[0]!;
   const sections = provider.getChildren(root);
-  assert.deepEqual(sections.map((section) => section.type === "section" ? section.kind : undefined), ["pending", "history"]);
+  assert.deepEqual(
+    sections.map((section) => section.type === "section" ? section.kind : section.type),
+    ["pending", "history", "otherSessionsSection"]
+  );
+  assert.match(String(provider.getTreeItem(root).description), /Active: Active work/);
   const historyNode = provider.getChildren(sections[1]!)[0]!;
   assert.equal(historyNode.type, "historyAttachment");
   assert.equal(provider.getTreeItem(historyNode).contextValue, "piContext.historyAttachment");
+  const otherSession = provider.getChildren(sections[2]!)[0]!;
+  assert.equal(otherSession.type, "inactiveConversation");
+  assert.equal(provider.getTreeItem(otherSession).description, "3 pending");
+  assert.equal(provider.getTreeItem(otherSession).command, undefined);
   provider.dispose();
 
   const testFile = vscode.Uri.file(join(tmpdir(), `pi context open ${randomUUID()}.ts`));

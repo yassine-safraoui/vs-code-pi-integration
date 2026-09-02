@@ -36,7 +36,7 @@ describe("protocol", () => {
   it("decodes a valid attachment and validates limits", async () => {
     const value = attachment();
     assert.equal((await Effect.runPromise(validateAttachmentBatch([value])))[0]?.text, value.text);
-    assert.equal(PROTOCOL_VERSION, 3);
+    assert.equal(PROTOCOL_VERSION, 4);
     assert.equal(MAX_HISTORY_ENTRIES, 50);
     assert.equal(MAX_HISTORY_BYTES, 1024 * 1024);
   });
@@ -61,7 +61,7 @@ describe("protocol", () => {
   });
 
   it("uses the dedicated per-user registry", () => {
-    assert.equal(registryPaths(join("Users", "test")).root, join("Users", "test", ".pi-context", "run", "v3"));
+    assert.equal(registryPaths(join("Users", "test")).root, join("Users", "test", ".pi-context", "run", "v4"));
   });
 
   it("expires a discovery record when its heartbeat reaches the stale threshold", () => {
@@ -76,6 +76,8 @@ describe("protocol", () => {
       protocolVersion: PROTOCOL_VERSION,
       revision: 2,
       instanceId: "5ee16f5e-40f9-4d78-a2c2-9f79045cb1c4",
+      activeConversation: { kind: "session", sessionId: "session-1", title: "Fix the parser" },
+      inactiveConversations: [{ kind: "new", title: "New chat", pendingCount: 2 }],
       attachments: [],
       history: [{
         historyId: "8b82058e-dde1-44ab-8f19-f4c39f16cf38",
@@ -84,6 +86,18 @@ describe("protocol", () => {
       }]
     });
     assert.equal(state.history[0]?.attachment.text, value.text);
+    assert.equal(state.activeConversation.title, "Fix the parser");
+    assert.equal(state.inactiveConversations[0]?.pendingCount, 2);
+  });
+
+  it("rejects attachment state without conversation ownership", () => {
+    assert.throws(() => Schema.decodeUnknownSync(AttachmentStateSchema)({
+      protocolVersion: PROTOCOL_VERSION,
+      revision: 0,
+      instanceId: "5ee16f5e-40f9-4d78-a2c2-9f79045cb1c4",
+      attachments: [],
+      history: []
+    }));
   });
 
   it("round-trips a VS Code attachment URI with its complete selection", async () => {

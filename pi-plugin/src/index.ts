@@ -1,7 +1,11 @@
 import { randomUUID } from "node:crypto";
 import { Effect, Exit, Scope } from "effect";
 import { SessionManager, type ExtensionAPI, type ExtensionContext } from "@earendil-works/pi-coding-agent";
-import { PROTOCOL_VERSION, type AttachmentSnapshot } from "@pi-context/protocol";
+import {
+  PROTOCOL_VERSION,
+  type AttachmentSnapshot,
+  type ConversationRef
+} from "@pi-context/protocol";
 import type { AttachmentStore } from "./attachment-store.js";
 import { makeAttachmentStore } from "./attachment-store.js";
 import { AttachmentManagerComponent } from "./attachment-manager.js";
@@ -19,11 +23,22 @@ import {
   historySeed,
   reconstructAttachmentHistory
 } from "./session-history.js";
+import { getProcessConversationCache } from "./conversation-cache.js";
+import {
+  activeConversation,
+  conversationTitle,
+  isSessionResumable,
+  promoteConversation,
+  resolveConversation
+} from "./conversation.js";
 
 const uiKey = "pi-context";
 
 export default function piContextPlugin(pi: ExtensionAPI): void {
+  const conversationCache = getProcessConversationCache();
   let activeContext: ExtensionContext | undefined;
+  let activeConversationRef: ConversationRef = { kind: "new" };
+  let startedAsFork = false;
   let store: AttachmentStore | undefined;
   let running: RunningRegistryServer | undefined;
   let sessionScope: Scope.CloseableScope | undefined;
@@ -84,6 +99,9 @@ export default function piContextPlugin(pi: ExtensionAPI): void {
     ctx.ui.setWidget(uiKey, undefined);
     stagedAttachmentIds = undefined;
     pinnedAttachmentContext = undefined;
+    activeConversationRef = resolveConversation(event.reason, ctx.sessionManager);
+    startedAsFork = event.reason === "fork";
+    const checkpoint = startedAsFork ? undefined : conversationCache.peek(activeConversationRef);
     const instanceId = randomUUID();
     let history = reconstructAttachmentHistory(ctx.sessionManager.getBranch());
     if (event.reason === "new" && event.previousSessionFile) {
@@ -97,7 +115,14 @@ export default function piContextPlugin(pi: ExtensionAPI): void {
     store = await Effect.runPromise(makeAttachmentStore(
       instanceId,
       (state) => updateWidget(state.attachments),
-      { initialHistory: history }
+      {
+        initialHistory: history,
+        initialPending: checkpoint?.pending,
+        conversationState: () => ({
+          activeConversation: activeConversation(activeConversationRef, ctx.sessionManager),
+          inactiveConversations: conversationCache.summaries(activeConversationRef)
+        })
+      }
     ));
     sessionScope = await Effect.runPromise(Scope.make());
     const acquired = startRegistryServer(ctx.cwd, store, { instanceId }).pipe(
@@ -111,7 +136,16 @@ export default function piContextPlugin(pi: ExtensionAPI): void {
       return;
     }
     running = result.right;
-    updateWidget([]);
+    if (startedAsFork) conversationCache.prune();
+    else conversationCache.take(activeConversationRef);
+    const evicted = conversationCache.drainEvictionNotices();
+    if (evicted.length > 0) {
+      ctx.ui.notify(
+        `Pi Context discarded inactive pending attachments for ${evicted.join(", ")} to stay within its memory limit.`,
+        "warning"
+      );
+    }
+    updateWidget(checkpoint?.pending.map(({ attachment }) => attachment) ?? []);
   });
 
   pi.on("session_before_switch", async (event, ctx) => {
@@ -160,16 +194,29 @@ export default function piContextPlugin(pi: ExtensionAPI): void {
     };
   });
 
-  pi.on("agent_settled", () => {
+  pi.on("agent_settled", (_event, ctx) => {
     pinnedAttachmentContext = undefined;
+    activeConversationRef = promoteConversation(activeConversationRef, ctx.sessionManager);
   });
 
-  pi.on("session_shutdown", async () => {
+  pi.on("session_shutdown", async (event, ctx) => {
+    if (store && event.reason !== "quit") {
+      activeConversationRef = promoteConversation(activeConversationRef, ctx.sessionManager);
+      const dropUnresumableFork = startedAsFork && !isSessionResumable(ctx.sessionManager);
+      if (!dropUnresumableFork) {
+        conversationCache.save(
+          activeConversationRef,
+          conversationTitle(activeConversationRef, ctx.sessionManager),
+          await Effect.runPromise(store.checkpointPending)
+        );
+      }
+    }
     activeContext?.ui.setStatus(uiKey, undefined);
     activeContext?.ui.setWidget(uiKey, undefined);
     activeContext = undefined;
     stagedAttachmentIds = undefined;
     pinnedAttachmentContext = undefined;
+    startedAsFork = false;
     running = undefined;
     store = undefined;
     if (sessionScope) {
