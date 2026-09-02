@@ -35,6 +35,8 @@ const state = (
   protocolVersion: PROTOCOL_VERSION,
   instanceId,
   revision,
+  activeConversation: { kind: "new", title: "New chat" },
+  inactiveConversations: [],
   attachments,
   history: []
 });
