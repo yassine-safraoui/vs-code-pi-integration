@@ -4,7 +4,8 @@ import type {
   AttachmentHistoryEntry,
   AttachmentSnapshot,
   AttachmentState,
-  DiscoveryRecord
+  DiscoveryRecord,
+  InactiveConversationSummary
 } from "@pi-context/protocol";
 
 interface PiNode {
@@ -20,6 +21,16 @@ interface SectionNode {
   readonly state: AttachmentState;
 }
 
+interface OtherSessionsSectionNode {
+  readonly type: "otherSessionsSection";
+  readonly state: AttachmentState;
+}
+
+interface InactiveConversationNode {
+  readonly type: "inactiveConversation";
+  readonly conversation: InactiveConversationSummary;
+}
+
 interface PendingAttachmentNode {
   readonly type: "pendingAttachment";
   readonly record: DiscoveryRecord;
@@ -32,7 +43,13 @@ export interface HistoryAttachmentNode {
   readonly entry: AttachmentHistoryEntry;
 }
 
-export type AttachmentTreeNode = PiNode | SectionNode | PendingAttachmentNode | HistoryAttachmentNode;
+export type AttachmentTreeNode =
+  | PiNode
+  | SectionNode
+  | OtherSessionsSectionNode
+  | InactiveConversationNode
+  | PendingAttachmentNode
+  | HistoryAttachmentNode;
 
 export interface PiAttachmentState {
   readonly record: DiscoveryRecord;
@@ -91,10 +108,26 @@ export class AttachmentTreeProvider implements vscode.TreeDataProvider<Attachmen
         basename(node.record.canonicalWorkingDirectory) || node.record.canonicalWorkingDirectory,
         vscode.TreeItemCollapsibleState.Expanded
       );
-      item.description = `${pendingCount} pending · ${historyCount} used`;
-      item.tooltip = node.record.canonicalWorkingDirectory;
+      item.description = `Active: ${node.state.activeConversation.title} · ${pendingCount} pending · ${historyCount} used`;
+      item.tooltip = `${node.record.canonicalWorkingDirectory}\nActive conversation: ${node.state.activeConversation.title}`;
       item.iconPath = new vscode.ThemeIcon("terminal");
       item.contextValue = "piContext.pi";
+      return item;
+    }
+
+    if (node.type === "otherSessionsSection") {
+      const item = new vscode.TreeItem("Other Sessions", vscode.TreeItemCollapsibleState.Collapsed);
+      item.description = String(node.state.inactiveConversations.length);
+      item.iconPath = new vscode.ThemeIcon("comment-discussion");
+      item.contextValue = "piContext.otherSessionsSection";
+      return item;
+    }
+
+    if (node.type === "inactiveConversation") {
+      const item = new vscode.TreeItem(node.conversation.title, vscode.TreeItemCollapsibleState.None);
+      item.description = `${node.conversation.pendingCount} pending`;
+      item.tooltip = `${node.conversation.title} has ${node.conversation.pendingCount} pending attachment${node.conversation.pendingCount === 1 ? "" : "s"}. Switch to that conversation in Pi to manage them.`;
+      item.iconPath = new vscode.ThemeIcon("comment");
       return item;
     }
 
@@ -132,12 +165,26 @@ export class AttachmentTreeProvider implements vscode.TreeDataProvider<Attachmen
 
   getChildren(node?: AttachmentTreeNode): AttachmentTreeNode[] {
     if (!node) return [...this.roots];
-    if (node.type === "pendingAttachment" || node.type === "historyAttachment") return [];
+    if (
+      node.type === "pendingAttachment" ||
+      node.type === "historyAttachment" ||
+      node.type === "inactiveConversation"
+    ) return [];
     if (node.type === "pi") {
-      return [
+      const children: AttachmentTreeNode[] = [
         { type: "section", kind: "pending", record: node.record, state: node.state },
         { type: "section", kind: "history", record: node.record, state: node.state }
       ];
+      if (node.state.inactiveConversations.length > 0) {
+        children.push({ type: "otherSessionsSection", state: node.state });
+      }
+      return children;
+    }
+    if (node.type === "otherSessionsSection") {
+      return node.state.inactiveConversations.map((conversation): InactiveConversationNode => ({
+        type: "inactiveConversation",
+        conversation
+      }));
     }
     if (node.kind === "pending") {
       return node.state.attachments.map((attachment): PendingAttachmentNode => ({

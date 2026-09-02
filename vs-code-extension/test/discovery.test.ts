@@ -8,9 +8,12 @@ import { describe, it } from "node:test";
 import { Effect } from "effect";
 import { PROTOCOL_VERSION, registryPaths, type AttachmentState, type DiscoveryRecord } from "@pi-context/protocol";
 import { makeDiscoveryService, makePiClient } from "../src/discovery.js";
+import { configurePiContextOutput } from "../src/logging.js";
 
 describe("Pi discovery", () => {
   it("enumerates only records whose authenticated health identity matches", async () => {
+    const logs: string[] = [];
+    configurePiContextOutput({ appendLine: (line) => logs.push(line), show: () => undefined });
     const userHome = await mkdtemp(join(tmpdir(), "pi-context-discovery-"));
     const paths = registryPaths(userHome);
     await mkdir(paths.instances, { recursive: true });
@@ -64,6 +67,14 @@ describe("Pi discovery", () => {
       assert.equal(live[0]?.health.pendingCount, 2);
       assert.equal(healthRequests, 1);
       assert.equal((await readdir(paths.stale)).length, 2);
+      const diagnosticLog = logs.join("\n");
+      assert.match(diagnosticLog, /discovery\.scan\.start/);
+      assert.match(diagnosticLog, /discovery\.scan\.protocol_directories/);
+      assert.match(diagnosticLog, /discovery\.health\.success/);
+      assert.match(diagnosticLog, /discovery\.record\.accepted/);
+      assert.match(diagnosticLog, /discovery\.record\.quarantined/);
+      assert.match(diagnosticLog, /discovery\.scan\.complete/);
+      assert.doesNotMatch(diagnosticLog, new RegExp(token.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
     } finally {
       server.closeAllConnections();
       await new Promise<void>((resolve) => server.close(() => resolve()));
@@ -75,7 +86,15 @@ describe("Pi client", () => {
   it("fetches authenticated state and verifies the instance identity", async () => {
     const instanceId = randomUUID();
     const token = randomBytes(32).toString("base64url");
-    const state: AttachmentState = { protocolVersion: PROTOCOL_VERSION, instanceId, revision: 3, attachments: [], history: [] };
+    const state: AttachmentState = {
+      protocolVersion: PROTOCOL_VERSION,
+      instanceId,
+      revision: 3,
+      activeConversation: { kind: "new", title: "New chat" },
+      inactiveConversations: [],
+      attachments: [],
+      history: []
+    };
     const server = createServer((request, response) => {
       assert.equal(request.url, "/v1/state");
       assert.equal(request.headers.authorization, `Bearer ${token}`);

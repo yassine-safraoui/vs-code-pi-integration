@@ -24,6 +24,7 @@ import {
   type RegistryPaths
 } from "@pi-context/protocol";
 import type { AttachmentStore } from "./attachment-store.js";
+import { silentLogger, type PiContextLogger } from "./logging.js";
 
 export interface RunningRegistryServer {
   readonly record: DiscoveryRecord;
@@ -36,6 +37,7 @@ interface StartOptions {
   readonly pid?: number;
   readonly startedAt?: string;
   readonly heartbeatIntervalMs?: number;
+  readonly logger?: PiContextLogger;
 }
 
 const json = (response: ServerResponse, status: number, value: unknown): void => {
@@ -90,18 +92,33 @@ const removeWithRetry = (path: string): Effect.Effect<void> =>
     Effect.catchAll(() => Effect.void)
   );
 
-const healthCheck = async (record: DiscoveryRecord): Promise<boolean> => {
+const healthCheck = async (record: DiscoveryRecord, logger: PiContextLogger): Promise<boolean> => {
   try {
+    logger.info("registry.lease.health_check.start", {
+      instanceId: record.instanceId,
+      cwd: record.canonicalWorkingDirectory,
+      host: record.host,
+      port: record.port
+    });
     const response = await fetch(`http://${record.host}:${record.port}/v1/health`, {
       headers: { authorization: `Bearer ${record.token}` },
       signal: AbortSignal.timeout(350)
     });
-    if (!response.ok) return false;
+    if (!response.ok) {
+      logger.warn("registry.lease.health_check.http_failure", { instanceId: record.instanceId, status: response.status });
+      return false;
+    }
     const body = await response.json() as Record<string, unknown>;
-    return body.instanceId === record.instanceId &&
+    const matches = body.instanceId === record.instanceId &&
       body.canonicalWorkingDirectory === record.canonicalWorkingDirectory &&
       body.protocolVersion === PROTOCOL_VERSION;
-  } catch {
+    logger.info("registry.lease.health_check.complete", { instanceId: record.instanceId, matches });
+    return matches;
+  } catch (cause) {
+    logger.warn("registry.lease.health_check.unreachable", {
+      instanceId: record.instanceId,
+      reason: cause instanceof Error ? cause.message : String(cause)
+    });
     return false;
   }
 };
@@ -115,8 +132,16 @@ const runProtocolEffect = async <A>(effect: Effect.Effect<A, ProtocolFailure>): 
 const acquireLease = async (
   paths: RegistryPaths,
   leasePath: string,
-  lease: LeaseRecord
+  lease: LeaseRecord,
+  logger: PiContextLogger
 ): Promise<void> => {
+  logger.info("registry.lease.acquire.start", {
+    leasePath,
+    instancesDirectory: paths.instances,
+    staleDirectory: paths.stale,
+    instanceId: lease.instanceId,
+    cwd: lease.canonicalWorkingDirectory
+  });
   await mkdir(paths.leases, { recursive: true, mode: 0o700 });
   await mkdir(paths.instances, { recursive: true, mode: 0o700 });
   await mkdir(paths.stale, { recursive: true, mode: 0o700 });
@@ -129,10 +154,12 @@ const acquireLease = async (
       } finally {
         await handle.close();
       }
+      logger.info("registry.lease.acquire.success", { leasePath, attempt: attempt + 1, instanceId: lease.instanceId });
       return;
     } catch (cause) {
       const code = cause && typeof cause === "object" && "code" in cause ? cause.code : undefined;
       if (code !== "EEXIST") throw cause;
+      logger.warn("registry.lease.acquire.exists", { leasePath, attempt: attempt + 1 });
     }
 
     let active = false;
@@ -140,9 +167,20 @@ const acquireLease = async (
       const existingLease = await Effect.runPromise(decodeLeaseRecord(JSON.parse(await readFile(leasePath, "utf8"))));
       const recordPath = join(paths.instances, `${existingLease.instanceId}.json`);
       const record = await Effect.runPromise(decodeDiscoveryRecord(JSON.parse(await readFile(recordPath, "utf8"))));
-      active = !isDiscoveryRecordStale(record) && await healthCheck(record);
-    } catch {
+      active = !isDiscoveryRecordStale(record) && await healthCheck(record, logger);
+      logger.info("registry.lease.existing_inspected", {
+        existingInstanceId: existingLease.instanceId,
+        recordPath,
+        stale: isDiscoveryRecordStale(record),
+        active
+      });
+    } catch (cause) {
       active = false;
+      logger.warn("registry.lease.existing_invalid", {
+        leasePath,
+        reason: "Existing lease or discovery record could not be validated.",
+        errorType: cause instanceof Error ? cause.name : typeof cause
+      });
     }
     if (active) {
       throw new ProtocolFailure({
@@ -154,9 +192,16 @@ const acquireLease = async (
     const quarantined = join(paths.stale, `${lease.instanceId}-${randomUUID()}.lease.json`);
     try {
       await rename(leasePath, quarantined);
+      logger.warn("registry.lease.quarantined", { leasePath, quarantined });
     } catch (cause) {
       const code = cause && typeof cause === "object" && "code" in cause ? cause.code : undefined;
-      if (code !== "ENOENT") await new Promise((resolve) => setTimeout(resolve, 20 * (attempt + 1)));
+      if (code !== "ENOENT") {
+        logger.warn("registry.lease.quarantine_failed", {
+          leasePath,
+          reason: cause instanceof Error ? cause.message : String(cause)
+        });
+        await new Promise((resolve) => setTimeout(resolve, 20 * (attempt + 1)));
+      }
     }
   }
   throw new ProtocolFailure({
@@ -197,6 +242,12 @@ export const startRegistryServer = (
 ): Effect.Effect<RunningRegistryServer, ProtocolFailure> =>
   Effect.tryPromise({
     try: async () => {
+      const logger = options.logger ?? silentLogger;
+      logger.info("registry.start.requested", {
+        cwd,
+        protocolVersion: PROTOCOL_VERSION,
+        pid: options.pid ?? process.pid
+      });
       const canonicalWorkingDirectory = await runProtocolEffect(canonicalizePath(cwd));
       const instanceId = options.instanceId ?? randomUUID();
       const token = randomBytes(32).toString("base64url");
@@ -204,22 +255,38 @@ export const startRegistryServer = (
       const leaseHash = createHash("sha256").update(canonicalWorkingDirectory).digest("hex");
       const leasePath = join(paths.leases, `${leaseHash}.json`);
       const recordPath = join(paths.instances, `${instanceId}.json`);
+      logger.info("registry.start.paths_resolved", {
+        instanceId,
+        canonicalWorkingDirectory,
+        registryRoot: paths.root,
+        leasePath,
+        recordPath
+      });
       const lease: LeaseRecord = { protocolVersion: PROTOCOL_VERSION, instanceId, canonicalWorkingDirectory, token };
-      await acquireLease(paths, leasePath, lease);
+      await acquireLease(paths, leasePath, lease, logger);
 
       let record: DiscoveryRecord | undefined;
       const server = createServer((request, response) => {
         void (async () => {
+          logger.info("registry.http.request", {
+            instanceId,
+            method: request.method,
+            path: request.url,
+            remoteAddress: request.socket.remoteAddress
+          });
           if (!record) {
+            logger.warn("registry.http.not_ready", { instanceId, method: request.method, path: request.url });
             json(response, 503, failureResponse(new ProtocolFailure({ code: "INSTANCE_GONE", message: "Pi Context is starting." })));
             return;
           }
           if (!authorized(request, token)) {
+            logger.warn("registry.http.unauthorized", { instanceId, method: request.method, path: request.url });
             json(response, 401, failureResponse(new ProtocolFailure({ code: "UNAUTHORIZED", message: "Invalid Pi Context token." })));
             return;
           }
           if (request.method === "GET" && request.url === "/v1/health") {
             const state = await Effect.runPromise(store.snapshot);
+            logger.info("registry.http.health", { instanceId, pendingCount: state.attachments.length });
             json(response, 200, {
               protocolVersion: PROTOCOL_VERSION,
               instanceId,
@@ -229,7 +296,16 @@ export const startRegistryServer = (
             return;
           }
           if (request.method === "GET" && request.url === "/v1/state") {
-            json(response, 200, await Effect.runPromise(store.snapshot));
+            const state = await Effect.runPromise(store.snapshot);
+            logger.info("registry.http.state", {
+              instanceId,
+              revision: state.revision,
+              activeConversationKind: state.activeConversation.kind,
+              pendingCount: state.attachments.length,
+              historyCount: state.history.length,
+              inactiveConversationCount: state.inactiveConversations.length
+            });
+            json(response, 200, state);
             return;
           }
           if (request.method !== "POST" || request.url !== "/v1/mutations") {
@@ -249,22 +325,41 @@ export const startRegistryServer = (
                 message: `Expected Pi Context protocol version ${PROTOCOL_VERSION}.`
               });
             }
-            const state = await runProtocolEffect(
+            const decodedMutation = await runProtocolEffect(
               decodeMutation(unknownBody).pipe(
                 Effect.mapError(() => new ProtocolFailure({
                   code: "INVALID_REQUEST",
                   message: "Request body does not match the Pi Context protocol."
-                })),
-                Effect.flatMap((decoded) => normalizeMutationAttachments(decoded, canonicalWorkingDirectory)),
+                }))
+              )
+            );
+            logger.info("registry.http.mutation", {
+              instanceId,
+              mutationType: decodedMutation.type,
+              ...(decodedMutation.type === "attachSelections" ? { attachmentCount: decodedMutation.attachments.length } : {})
+            });
+            const state = await runProtocolEffect(
+              normalizeMutationAttachments(decodedMutation, canonicalWorkingDirectory).pipe(
                 Effect.flatMap(store.apply)
               )
             );
+            logger.info("registry.http.mutation_success", {
+              instanceId,
+              mutationType: decodedMutation.type,
+              revision: state.revision,
+              pendingCount: state.attachments.length
+            });
             json(response, 200, state);
           } catch (cause) {
             const failure = cause instanceof ProtocolFailure
               ? cause
               : new ProtocolFailure({ code: "INVALID_REQUEST", message: "Could not process the attachment request." });
             const status = failure.code === "PAYLOAD_TOO_LARGE" ? 413 : 400;
+            logger.error("registry.http.mutation_failure", failure, {
+              instanceId,
+              code: failure.code,
+              status
+            });
             if (!response.headersSent) json(response, status, failureResponse(failure));
           }
         })();
@@ -292,8 +387,16 @@ export const startRegistryServer = (
           port: address.port,
           token
         };
+        logger.info("registry.listener.started", { instanceId, host: record.host, port: record.port });
         await atomicWrite(recordPath, record);
+        logger.info("registry.record.published", {
+          instanceId,
+          recordPath,
+          canonicalWorkingDirectory,
+          protocolVersion: PROTOCOL_VERSION
+        });
       } catch (cause) {
+        logger.error("registry.start.failure", cause, { instanceId, recordPath, leasePath });
         server.closeAllConnections();
         server.close();
         await rm(leasePath, { force: true });
@@ -307,13 +410,16 @@ export const startRegistryServer = (
           if (closed || !record) return;
           record = { ...record, lastActiveAt: new Date().toISOString() };
           await atomicWrite(recordPath, record);
-        }).catch(() => {
+          logger.info("registry.heartbeat.published", { instanceId, recordPath, lastActiveAt: record.lastActiveAt });
+        }).catch((cause) => {
           // A missed write makes the record expire; the next interval retries it.
+          logger.error("registry.heartbeat.failure", cause, { instanceId, recordPath });
         });
       }, options.heartbeatIntervalMs ?? DISCOVERY_HEARTBEAT_INTERVAL_MS);
       heartbeat.unref();
       const close = Effect.gen(function* () {
         if (closed) return;
+        logger.info("registry.close.start", { instanceId, recordPath, leasePath });
         closed = true;
         clearInterval(heartbeat);
         yield* Effect.promise(() => heartbeatWrite);
@@ -329,15 +435,29 @@ export const startRegistryServer = (
             return false;
           }
         };
-        if (yield* Effect.promise(() => owns(recordPath, token))) yield* removeWithRetry(recordPath);
-        if (yield* Effect.promise(() => owns(leasePath, token))) yield* removeWithRetry(leasePath);
+        if (yield* Effect.promise(() => owns(recordPath, token))) {
+          yield* removeWithRetry(recordPath);
+          logger.info("registry.close.record_removed", { instanceId, recordPath });
+        } else logger.warn("registry.close.record_not_owned", { instanceId, recordPath });
+        if (yield* Effect.promise(() => owns(leasePath, token))) {
+          yield* removeWithRetry(leasePath);
+          logger.info("registry.close.lease_removed", { instanceId, leasePath });
+        } else logger.warn("registry.close.lease_not_owned", { instanceId, leasePath });
+        logger.info("registry.close.complete", { instanceId });
       });
       return { record, close };
     },
-    catch: (cause) => cause instanceof ProtocolFailure
-      ? cause
-      : new ProtocolFailure({
+    catch: (cause) => {
+      (options.logger ?? silentLogger).error("registry.start.failed", cause, {
+        cwd,
+        protocolVersion: PROTOCOL_VERSION,
+        pid: options.pid ?? process.pid
+      });
+      return cause instanceof ProtocolFailure
+        ? cause
+        : new ProtocolFailure({
           code: "REGISTRY_UNAVAILABLE",
           message: cause instanceof Error ? cause.message : "Could not start Pi Context discovery."
-        })
+        });
+    }
   });

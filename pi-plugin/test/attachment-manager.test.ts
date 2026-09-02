@@ -31,7 +31,15 @@ describe("AttachmentManagerComponent", () => {
     const component = new AttachmentManagerComponent([selected], theme, {
       remove: async (attachmentId): Promise<AttachmentState> => {
         removedId = attachmentId;
-        return { protocolVersion: PROTOCOL_VERSION, revision: 2, instanceId: randomUUID(), attachments: [], history: [] };
+        return {
+          protocolVersion: PROTOCOL_VERSION,
+          revision: 2,
+          instanceId: randomUUID(),
+          activeConversation: { kind: "new", title: "New chat" },
+          inactiveConversations: [],
+          attachments: [],
+          history: []
+        };
       },
       open: async () => undefined,
       close: () => undefined,

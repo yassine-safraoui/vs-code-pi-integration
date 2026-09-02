@@ -3,7 +3,7 @@ import { realpath } from "node:fs/promises";
 import { homedir } from "node:os";
 import * as nodePath from "node:path";
 
-export const PROTOCOL_VERSION = 3 as const;
+export const PROTOCOL_VERSION = 4 as const;
 export const DISCOVERY_HEARTBEAT_INTERVAL_MS = 5 * 60 * 1000;
 export const DISCOVERY_STALE_AFTER_MS = 6 * 60 * 1000;
 export const VSCODE_EXTENSION_ID = "pi-context.pi-context-vscode";
@@ -69,6 +69,43 @@ export const AttachmentHistoryEntrySchema = Schema.Struct({
 });
 export type AttachmentHistoryEntry = typeof AttachmentHistoryEntrySchema.Type;
 
+export const ConversationRefSchema = Schema.Union(
+  Schema.Struct({ kind: Schema.Literal("new") }),
+  Schema.Struct({
+    kind: Schema.Literal("session"),
+    sessionId: NonEmptyString
+  })
+);
+export type ConversationRef = typeof ConversationRefSchema.Type;
+
+export const ActiveConversationSchema = Schema.Union(
+  Schema.Struct({
+    kind: Schema.Literal("new"),
+    title: NonEmptyString
+  }),
+  Schema.Struct({
+    kind: Schema.Literal("session"),
+    sessionId: NonEmptyString,
+    title: NonEmptyString
+  })
+);
+export type ActiveConversation = typeof ActiveConversationSchema.Type;
+
+export const InactiveConversationSummarySchema = Schema.Union(
+  Schema.Struct({
+    kind: Schema.Literal("new"),
+    title: NonEmptyString,
+    pendingCount: NonNegativeInteger
+  }),
+  Schema.Struct({
+    kind: Schema.Literal("session"),
+    sessionId: NonEmptyString,
+    title: NonEmptyString,
+    pendingCount: NonNegativeInteger
+  })
+);
+export type InactiveConversationSummary = typeof InactiveConversationSummarySchema.Type;
+
 export const OpenAttachmentRequestSchema = Schema.Struct({
   protocolVersion: Schema.Literal(PROTOCOL_VERSION),
   fileUri: FileUri,
@@ -112,6 +149,8 @@ export const AttachmentStateSchema = Schema.Struct({
   protocolVersion: Schema.Literal(PROTOCOL_VERSION),
   revision: NonNegativeInteger,
   instanceId: Schema.UUID,
+  activeConversation: ActiveConversationSchema,
+  inactiveConversations: Schema.Array(InactiveConversationSummarySchema),
   attachments: Schema.Array(AttachmentSnapshotSchema),
   history: Schema.Array(AttachmentHistoryEntrySchema)
 });

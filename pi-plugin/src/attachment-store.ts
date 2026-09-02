@@ -13,6 +13,8 @@ import {
   type AttachmentHistoryEntry,
   type AttachmentSnapshot,
   type AttachmentState,
+  type ActiveConversation,
+  type InactiveConversationSummary,
   type Mutation
 } from "@pi-context/protocol";
 
@@ -22,22 +24,30 @@ interface StoreData {
   readonly history: ReadonlyArray<AttachmentHistoryEntry>;
 }
 
-interface PendingAttachment {
+export interface PendingAttachmentCheckpoint {
   readonly attachment: AttachmentSnapshot;
   readonly historyId?: string;
 }
+
+type PendingAttachment = PendingAttachmentCheckpoint;
 
 export interface AttachmentStore {
   readonly snapshot: Effect.Effect<AttachmentState>;
   readonly apply: (mutation: Mutation) => Effect.Effect<AttachmentState, ProtocolFailure>;
   readonly consumeForPrompt: (ids: ReadonlyArray<string>) => Effect.Effect<ConsumedAttachments>;
   readonly replaceHistory: (history: ReadonlyArray<AttachmentHistoryEntry>) => Effect.Effect<AttachmentState>;
+  readonly checkpointPending: Effect.Effect<ReadonlyArray<PendingAttachmentCheckpoint>>;
 }
 
 export interface AttachmentStoreOptions {
   readonly now?: () => string;
   readonly makeId?: () => string;
   readonly initialHistory?: ReadonlyArray<AttachmentHistoryEntry>;
+  readonly initialPending?: ReadonlyArray<PendingAttachmentCheckpoint>;
+  readonly conversationState?: () => {
+    readonly activeConversation: ActiveConversation;
+    readonly inactiveConversations: ReadonlyArray<InactiveConversationSummary>;
+  };
 }
 
 export interface ConsumedAttachments {
@@ -64,6 +74,32 @@ const retainHistory = (
   }
   return retained;
 };
+
+const validatePending = (
+  attachments: ReadonlyMap<string, PendingAttachment>
+): Effect.Effect<void, ProtocolFailure> => Effect.gen(function* () {
+  const values = [...attachments.values()].map(({ attachment }) => attachment);
+  if (values.length > MAX_ATTACHMENTS) {
+    return yield* new ProtocolFailure({
+      code: "PAYLOAD_TOO_LARGE",
+      message: `At most ${MAX_ATTACHMENTS} attachments may be pending.`
+    });
+  }
+  const oversized = values.find((item) => utf8ByteLength(item.text) > MAX_ATTACHMENT_BYTES);
+  if (oversized) {
+    return yield* new ProtocolFailure({
+      code: "PAYLOAD_TOO_LARGE",
+      message: `${oversized.displayPath} exceeds the ${MAX_ATTACHMENT_BYTES}-byte attachment limit after merging.`
+    });
+  }
+  const total = values.reduce((sum, item) => sum + utf8ByteLength(item.text), 0);
+  if (total > MAX_TOTAL_ATTACHMENT_BYTES) {
+    return yield* new ProtocolFailure({
+      code: "PAYLOAD_TOO_LARGE",
+      message: `Pending attachments exceed ${MAX_TOTAL_ATTACHMENT_BYTES} bytes.`
+    });
+  }
+});
 
 type Position = AttachmentSnapshot["range"]["start"];
 
@@ -195,13 +231,27 @@ export const makeAttachmentStore = (
   instanceId: string,
   onChange: (state: AttachmentState) => void = () => undefined,
   options: AttachmentStoreOptions = {}
-): Effect.Effect<AttachmentStore> =>
+): Effect.Effect<AttachmentStore, ProtocolFailure> =>
   Effect.gen(function* () {
     const now = options.now ?? (() => new Date().toISOString());
     const makeId = options.makeId ?? randomUUID;
+    const initialAttachments = new Map<string, PendingAttachment>();
+    for (const pending of options.initialPending ?? []) {
+      if (initialAttachments.has(pending.attachment.id)) {
+        return yield* new ProtocolFailure({
+          code: "INVALID_ATTACHMENT",
+          message: `Attachment ${pending.attachment.id} appears more than once in the restored checkpoint.`
+        });
+      }
+      initialAttachments.set(pending.attachment.id, pending);
+    }
+    if (initialAttachments.size > 0) {
+      yield* validateAttachmentBatch([...initialAttachments.values()].map(({ attachment }) => attachment));
+      yield* validatePending(initialAttachments);
+    }
     const state = yield* Ref.make<StoreData>({
       revision: 0,
-      attachments: new Map(),
+      attachments: initialAttachments,
       history: retainHistory(options.initialHistory ?? [])
     });
     const semaphore = yield* Effect.makeSemaphore(1);
@@ -209,36 +259,14 @@ export const makeAttachmentStore = (
       protocolVersion: PROTOCOL_VERSION,
       revision: data.revision,
       instanceId,
+      ...(options.conversationState?.() ?? {
+        activeConversation: { kind: "new", title: "New chat" } as const,
+        inactiveConversations: []
+      }),
       attachments: [...data.attachments.values()].map(({ attachment }) => attachment),
       history: data.history
     });
     const snapshot = Ref.get(state).pipe(Effect.map(toSnapshot));
-
-    const validatePending = (
-      attachments: ReadonlyMap<string, PendingAttachment>
-    ): Effect.Effect<void, ProtocolFailure> => Effect.gen(function* () {
-      const values = [...attachments.values()].map(({ attachment }) => attachment);
-      if (values.length > MAX_ATTACHMENTS) {
-        return yield* new ProtocolFailure({
-          code: "PAYLOAD_TOO_LARGE",
-          message: `At most ${MAX_ATTACHMENTS} attachments may be pending.`
-        });
-      }
-      const oversized = values.find((item) => utf8ByteLength(item.text) > MAX_ATTACHMENT_BYTES);
-      if (oversized) {
-        return yield* new ProtocolFailure({
-          code: "PAYLOAD_TOO_LARGE",
-          message: `${oversized.displayPath} exceeds the ${MAX_ATTACHMENT_BYTES}-byte attachment limit after merging.`
-        });
-      }
-      const total = values.reduce((sum, item) => sum + utf8ByteLength(item.text), 0);
-      if (total > MAX_TOTAL_ATTACHMENT_BYTES) {
-        return yield* new ProtocolFailure({
-          code: "PAYLOAD_TOO_LARGE",
-          message: `Pending attachments exceed ${MAX_TOTAL_ATTACHMENT_BYTES} bytes.`
-        });
-      }
-    });
 
     const addAttachments = (
       current: ReadonlyMap<string, PendingAttachment>,
@@ -393,5 +421,9 @@ export const makeAttachmentStore = (
       return toSnapshot(next);
     }));
 
-    return { snapshot, apply, consumeForPrompt, replaceHistory };
+    const checkpointPending = Ref.get(state).pipe(Effect.map((current) =>
+      [...current.attachments.values()].map((pending) => ({ ...pending }))
+    ));
+
+    return { snapshot, apply, consumeForPrompt, replaceHistory, checkpointPending };
   });

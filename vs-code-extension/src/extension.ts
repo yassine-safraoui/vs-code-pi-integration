@@ -23,6 +23,13 @@ import { routeToPi } from "./routing.js";
 import { captureSelections, snapshotsForTarget } from "./selection.js";
 import { AttachmentTreeProvider, type HistoryAttachmentNode } from "./attachments-tree.js";
 import { AttachmentGutter } from "./attachment-gutter.js";
+import {
+  configurePiContextOutput,
+  logError,
+  logInfo,
+  logWarning,
+  showPiContextOutput
+} from "./logging.js";
 
 interface PiPickItem extends vscode.QuickPickItem {
   readonly pi?: LivePi;
@@ -39,6 +46,7 @@ const showFailure = async (cause: unknown): Promise<void> => {
   const message = cause instanceof ProtocolFailure || cause instanceof Error
     ? cause.message
     : "Pi Context failed unexpectedly.";
+  logError("ui.operation.failure", cause);
   await vscode.window.showWarningMessage(message);
 };
 
@@ -69,11 +77,22 @@ const choosePi = async (
 };
 
 const discoverHealthyPis = Effect.gen(function* () {
+  yield* Effect.sync(() => logInfo("extension.discovery.requested", { rememberedInstanceId }));
   const instances = yield* discoverPis;
   yield* Effect.sync(() => {
     if (rememberedInstanceId && !instances.some((pi) => pi.record.instanceId === rememberedInstanceId)) {
+      logWarning("extension.routing.remembered_instance_gone", { rememberedInstanceId });
       rememberedInstanceId = undefined;
     }
+    logInfo("extension.discovery.completed", {
+      liveInstances: instances.length,
+      instances: instances.map(({ record }) => ({
+        instanceId: record.instanceId,
+        cwd: record.canonicalWorkingDirectory,
+        pid: record.pid,
+        port: record.port
+      }))
+    });
   });
   return instances;
 });
@@ -81,6 +100,7 @@ const discoverHealthyPis = Effect.gen(function* () {
 const healthyInstances = (): Promise<ReadonlyArray<LivePi>> => runtime.runPromise(discoverHealthyPis);
 
 const refreshAttachmentState = Effect.gen(function* () {
+  yield* Effect.sync(() => logInfo("extension.refresh.start"));
   const instances = yield* discoverHealthyPis;
   const states = yield* Effect.all(
     instances.map((pi) => getPiState(pi.record).pipe(
@@ -91,10 +111,15 @@ const refreshAttachmentState = Effect.gen(function* () {
   yield* Effect.sync(() => {
     attachmentTree?.replaceStates(states);
     attachmentGutter?.replaceStates(states.map(({ state }) => state));
+    logInfo("extension.refresh.complete", {
+      instances: states.length,
+      pendingAttachments: states.reduce((sum, { state }) => sum + state.attachments.length, 0)
+    });
   });
 });
 
 const chooseTargetCommand = async (): Promise<void> => {
+  logInfo("command.choose_target.start");
   try {
     const instances = await healthyInstances();
     if (instances.length === 0) {
@@ -107,6 +132,10 @@ const chooseTargetCommand = async (): Promise<void> => {
     });
     if (selected) {
       rememberedInstanceId = selected.record.instanceId;
+      logInfo("command.choose_target.selected", {
+        instanceId: selected.record.instanceId,
+        cwd: selected.record.canonicalWorkingDirectory
+      });
       await vscode.window.showInformationMessage(`Pi Context target: ${selected.record.canonicalWorkingDirectory}`);
     }
   } catch (cause) {
@@ -115,10 +144,26 @@ const chooseTargetCommand = async (): Promise<void> => {
 };
 
 const attachSelectionsCommand = async (): Promise<void> => {
+  logInfo("command.attach.start");
   try {
     const selections = await runtime.runPromise(captureSelections());
+    logInfo("command.attach.selections_captured", {
+      selectionCount: selections.length,
+      fileCount: new Set(selections.map(({ canonicalFilePath }) => canonicalFilePath)).size
+    });
     const instances = await healthyInstances();
     const decision = routeToPi(instances, selections.map((selection) => selection.canonicalFilePath), rememberedInstanceId);
+    logInfo("command.attach.route_decision", {
+      decision: decision._tag,
+      ...(decision._tag === "target" ? {
+        instanceId: decision.target.record.instanceId,
+        cwd: decision.target.record.canonicalWorkingDirectory
+      } : {}),
+      ...(decision._tag === "pick" ? {
+        candidates: decision.candidates.length,
+        mixedRoots: decision.mixedRoots
+      } : {})
+    });
     if (decision._tag === "none") {
       await vscode.window.showWarningMessage("No running Pi with the Pi Context plugin was discovered.");
       return;
@@ -132,6 +177,10 @@ const attachSelectionsCommand = async (): Promise<void> => {
             : "Choose the Pi that should receive these selections"
         });
     if (!target) return;
+    logInfo("command.attach.target", {
+      instanceId: target.record.instanceId,
+      cwd: target.record.canonicalWorkingDirectory
+    });
     const attachments = snapshotsForTarget(selections, target.record.canonicalWorkingDirectory);
     const mutation: Mutation = {
       protocolVersion: PROTOCOL_VERSION,
@@ -143,6 +192,12 @@ const attachSelectionsCommand = async (): Promise<void> => {
     attachmentTree?.acceptState(target.record, state);
     attachmentGutter?.acceptState(state);
     rememberedInstanceId = target.record.instanceId;
+    logInfo("command.attach.success", {
+      instanceId: state.instanceId,
+      attachedCount: attachments.length,
+      pendingCount: state.attachments.length,
+      revision: state.revision
+    });
     await vscode.window.showInformationMessage(
       `Attached ${attachments.length} selection${attachments.length === 1 ? "" : "s"} to Pi in ${target.record.canonicalWorkingDirectory} (${state.attachments.length} pending).`
     );
@@ -157,6 +212,7 @@ const attachSelectionsCommand = async (): Promise<void> => {
 };
 
 const clearAttachmentsCommand = async (): Promise<void> => {
+  logInfo("command.clear.start");
   try {
     const instances = await healthyInstances();
     if (instances.length === 0) {
@@ -171,6 +227,11 @@ const clearAttachmentsCommand = async (): Promise<void> => {
     const state = await runtime.runPromise(mutatePi(target.record, clearMutation()));
     attachmentTree?.acceptState(target.record, state);
     attachmentGutter?.acceptState(state);
+    logInfo("command.clear.success", {
+      instanceId: state.instanceId,
+      cwd: target.record.canonicalWorkingDirectory,
+      revision: state.revision
+    });
     await vscode.window.showInformationMessage(`Cleared Pi Context attachments in ${target.record.canonicalWorkingDirectory}.`);
   } catch (cause) {
     await showFailure(cause);
@@ -230,6 +291,10 @@ const openAttachmentCommand = async (attachment: AttachmentSnapshot): Promise<vo
 };
 
 const reattachHistoryCommand = async (node: HistoryAttachmentNode): Promise<void> => {
+  logInfo("command.reattach.start", {
+    instanceId: node.record.instanceId,
+    cwd: node.record.canonicalWorkingDirectory
+  });
   try {
     const state = await runtime.runPromise(mutatePi(node.record, {
       protocolVersion: PROTOCOL_VERSION,
@@ -240,6 +305,11 @@ const reattachHistoryCommand = async (node: HistoryAttachmentNode): Promise<void
     attachmentTree?.acceptState(node.record, state);
     attachmentGutter?.acceptState(state);
     rememberedInstanceId = node.record.instanceId;
+    logInfo("command.reattach.success", {
+      instanceId: state.instanceId,
+      pendingCount: state.attachments.length,
+      revision: state.revision
+    });
     await vscode.window.showInformationMessage(
       `Reattached ${node.entry.attachment.displayPath} to Pi in ${node.record.canonicalWorkingDirectory} (${state.attachments.length} pending).`
     );
@@ -249,6 +319,7 @@ const reattachHistoryCommand = async (node: HistoryAttachmentNode): Promise<void
 };
 
 const refreshAttachmentsCommand = async (): Promise<void> => {
+  logInfo("command.refresh.start");
   try {
     await runtime.runPromise(refreshAttachmentState);
   } catch (cause) {
@@ -257,6 +328,15 @@ const refreshAttachmentsCommand = async (): Promise<void> => {
 };
 
 export function activate(context: vscode.ExtensionContext): void {
+  const output = vscode.window.createOutputChannel("Pi Context");
+  configurePiContextOutput(output);
+  logInfo("extension.activate", {
+    extensionVersion: context.extension.packageJSON.version,
+    extensionPath: context.extensionUri.fsPath,
+    protocolVersion: PROTOCOL_VERSION,
+    platform: process.platform,
+    architecture: process.arch
+  });
   attachmentTree = new AttachmentTreeProvider();
   attachmentGutter = new AttachmentGutter(vscode.Uri.joinPath(context.extensionUri, "media", "attached-range.svg"));
   const treeView = vscode.window.createTreeView("piContext.attachments", {
@@ -268,6 +348,10 @@ export function activate(context: vscode.ExtensionContext): void {
     vscode.commands.registerCommand("piContext.chooseTarget", chooseTargetCommand),
     vscode.commands.registerCommand("piContext.clearAttachments", clearAttachmentsCommand),
     vscode.commands.registerCommand("piContext.refreshAttachments", refreshAttachmentsCommand),
+    vscode.commands.registerCommand("piContext.showLogs", () => {
+      logInfo("command.show_logs");
+      showPiContextOutput();
+    }),
     vscode.commands.registerCommand("piContext.openAttachment", openAttachmentCommand),
     vscode.commands.registerCommand("piContext.reattachHistory", reattachHistoryCommand),
     vscode.window.registerUriHandler({ handleUri: handleExtensionUri }),
@@ -277,11 +361,13 @@ export function activate(context: vscode.ExtensionContext): void {
     }),
     attachmentTree,
     attachmentGutter,
+    output,
     { dispose: () => { void runtime.dispose(); } }
   );
   if (treeView.visible) void refreshAttachmentsCommand();
 }
 
 export function deactivate(): Thenable<void> {
+  logInfo("extension.deactivate");
   return runtime.dispose();
 }

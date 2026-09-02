@@ -312,4 +312,55 @@ describe("AttachmentStore", () => {
     }
     assert.equal((await Effect.runPromise(byteStore.snapshot)).history.length, 16);
   });
+
+  it("restores pending attachments from a checkpoint", async () => {
+    const attachment = item();
+    const first = await Effect.runPromise(makeAttachmentStore(randomUUID()));
+    await Effect.runPromise(first.apply(attach([attachment])));
+    const checkpoint = await Effect.runPromise(first.checkpointPending);
+
+    const restored = await Effect.runPromise(makeAttachmentStore(randomUUID(), undefined, {
+      initialPending: checkpoint
+    }));
+    assert.deepEqual((await Effect.runPromise(restored.snapshot)).attachments, [attachment]);
+  });
+
+  it("projects current conversation metadata on every state read", async () => {
+    let title = "Original name";
+    const store = await Effect.runPromise(makeAttachmentStore(randomUUID(), undefined, {
+      conversationState: () => ({
+        activeConversation: { kind: "session", sessionId: "session-1", title },
+        inactiveConversations: [{ kind: "new", title: "New chat", pendingCount: 2 }]
+      })
+    }));
+    assert.equal((await Effect.runPromise(store.snapshot)).activeConversation.title, "Original name");
+    title = "Renamed session";
+    const renamed = await Effect.runPromise(store.snapshot);
+    assert.equal(renamed.activeConversation.title, "Renamed session");
+    assert.equal(renamed.inactiveConversations[0]?.pendingCount, 2);
+    assert.equal(renamed.revision, 0);
+  });
+
+  it("preserves replay history lineage through a pending checkpoint", async () => {
+    const original = item();
+    const first = await Effect.runPromise(makeAttachmentStore(randomUUID()));
+    await Effect.runPromise(first.apply(attach([original])));
+    await Effect.runPromise(first.consumeForPrompt([original.id]));
+    const history = (await Effect.runPromise(first.snapshot)).history;
+    await Effect.runPromise(first.apply({
+      protocolVersion: PROTOCOL_VERSION,
+      requestId: randomUUID(),
+      type: "reattachHistory",
+      historyId: history[0]!.historyId
+    }));
+    const checkpoint = await Effect.runPromise(first.checkpointPending);
+    assert.equal(checkpoint[0]?.historyId, history[0]?.historyId);
+
+    const restored = await Effect.runPromise(makeAttachmentStore(randomUUID(), undefined, {
+      initialHistory: history,
+      initialPending: checkpoint
+    }));
+    await Effect.runPromise(restored.consumeForPrompt([checkpoint[0]!.attachment.id]));
+    assert.equal((await Effect.runPromise(restored.snapshot)).history[0]?.historyId, history[0]?.historyId);
+  });
 });
