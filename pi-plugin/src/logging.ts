@@ -22,12 +22,17 @@ const safeFields = (fields: Readonly<Record<string, unknown>>): string => {
 };
 
 export const makeTerminalLogger = (): PiContextLogger => {
+  const fs = require("fs");
+  const path = require("path");
+  const logFile = path.join(__dirname, "logs.log");
+
   const write = (
     level: "INFO" | "WARN" | "ERROR",
     event: string,
     fields: Readonly<Record<string, unknown>>
   ): void => {
-    console.error(`${new Date().toISOString()} [pi-context] [${level}] ${event}${safeFields(fields)}`);
+    const line = `${new Date().toISOString()} [pi-context] [${level}] ${event}${safeFields(fields)}\n`;
+    fs.appendFileSync(logFile, line);
   };
   return {
     info: (event, fields = {}) => write("INFO", event, fields),
